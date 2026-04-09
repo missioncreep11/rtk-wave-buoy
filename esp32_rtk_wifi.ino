@@ -338,8 +338,10 @@ void setup() {
     Serial.println(F("ERROR: ZED-F9P not found. Check wiring."));
   } else {
     Serial.println(F("ZED-F9P connected!"));
-    myGNSS.setPortInput(COM_PORT_UART1, COM_TYPE_UBX | COM_TYPE_NMEA | COM_TYPE_RTCM3);
-    myGNSS.setNavigationFrequency(10);
+    // Don't call setPortInput — the ZED-F9P accepts RTCM3 on all ports by default.
+    // Forcing COM_PORT_UART1 could be wrong if the ESP32 is wired to UART2.
+    // Use default 1Hz nav rate to give the ZED-F9P maximum time for RTCM processing
+    // and RTK convergence. 10Hz was starving the RTK engine.
   }
 
   // WiFi
@@ -520,17 +522,20 @@ void beginClient() {
       lastReceivedRTCM_ms = millis();
     } // end connect
 
-    // --- Read RTCM and push to ZED-F9P ---
+    // --- Read RTCM and push to ZED-F9P via direct serial write ---
     if (ntripClient.connected()) {
-      uint8_t rtcmData[512 * 4];
+      uint8_t rtcmData[512];
       rtcmCount = 0;
       while (ntripClient.available()) {
-        rtcmData[rtcmCount++] = ntripClient.read();
-        if (rtcmCount == sizeof(rtcmData)) break;
+        int bytesToRead = min((int)ntripClient.available(), (int)sizeof(rtcmData));
+        int bytesRead = ntripClient.read(rtcmData, bytesToRead);
+        if (bytesRead > 0) {
+          gpsSerial.write(rtcmData, bytesRead);
+          rtcmCount += bytesRead;
+        }
       }
       if (rtcmCount > 0) {
         lastReceivedRTCM_ms = millis();
-        myGNSS.pushRawData(rtcmData, rtcmCount, false);
         Serial.print(F("RTCM -> ZED: ")); Serial.println(rtcmCount);
       }
     }
