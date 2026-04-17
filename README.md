@@ -4,10 +4,11 @@ A centimeter-level precision GPS data logging system for oceanographic applicati
 
 ## Overview
 
-This system achieves centimeter-level positioning accuracy by receiving Real-Time Kinematic (RTK) corrections via NTRIP protocol over cellular networks. It consists of two main components:
+This system achieves centimeter-level positioning accuracy by receiving Real-Time Kinematic (RTK) corrections via NTRIP protocol over cellular networks. It consists of three main components:
 
-1. **ESP32 + SIM7000 LTE Module** - Handles cellular connectivity and NTRIP correction streaming
-2. **OpenLog Artemis Data Logger** - Records high-precision GPS data and IMU measurements to SD card
+1. **Sparkfun ZED-F9P** - High precision RTK GPS receiver board based around the Ublox ZED-F9P RTK
+2. **ESP32 + SIM7000 LTE Module** - Handles cellular connectivity and NTRIP correction streaming to SparkFun ZED-F9P
+3. **OpenLog Artemis Data Logger** - Records high-precision GPS data and IMU measurements to SD card
 
 ---
 
