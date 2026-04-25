@@ -17,10 +17,13 @@
   Hardware:
     SparkFun ESP32 Thing Plus + u-blox ZED-F9P
 
-  Wiring:
-    ESP32 GPIO 27 (RX2) → ZED-F9P TX2
-    ESP32 GPIO 12 (TX2) → ZED-F9P RX2
-    ESP32 GND → ZED-F9P GND
+  Wiring (ESP32 UART2 ↔ F9P UART1 — the pads labeled TX1/MISO and
+  RX1/MOSI on the SparkFun breakout are F9P UART1; MISO/MOSI are the
+  shared SPI names on the same pads):
+    ESP32 GPIO 27 (RX2) → ZED-F9P TX1/MISO   (F9P UART1)
+    ESP32 GPIO 12 (TX2) → ZED-F9P RX1/MOSI   (F9P UART1)
+    ESP32 GND           → ZED-F9P GND
+  Verified by u-center MON-COMMS: RTCM3 arrives on F9P UART1, not UART2.
 
   Button (GPIO 0): press to start NTRIP, press again to stop
   LED (GPIO 13):   blinking = WiFi connected, ready
@@ -67,7 +70,6 @@ unsigned long lastBlinkTime = 0;
 // RTCM / GGA timing
 long lastReceivedRTCM_ms           = 0;
 const int maxTimeBeforeHangup_ms   = 100000;
-unsigned long lastGGASent_ms       = 0;
 const unsigned long ggaInterval_ms = 300000; // 5 min — buoy drift slow vs VRS scale
 
 // Session diagnostics
@@ -98,7 +100,9 @@ void setup() {
   } else {
     Serial.println(F("ZED-F9P connected."));
     // No setPortInput — ZED-F9P accepts RTCM3 on all UARTs by default.
-    // No setNavigationFrequency — 1 Hz default keeps the RTK engine fed.
+    // 5 Hz captures wave motion (periods ~5–20 s) while staying well under
+    // the F9P's RTK nav-rate ceiling.
+    myGNSS.setNavigationFrequency(5);
   }
 
   Serial.print(F("Connecting to WiFi"));
@@ -204,6 +208,7 @@ String buildGGA() {
 void beginClient() {
   WiFiClient ntripClient;
   long rtcmCount = 0;
+  unsigned long lastGGASent_ms = 0;
 
   Serial.println(F("Subscribing to Polaris caster..."));
 
@@ -373,13 +378,15 @@ void beginClient() {
       }
     }
 
-    // Disconnect if no RTCM received for 100s
+    // RTCM silent too long → drop the socket and let the outer loop reconnect.
+    // Keeps the buoy recovering on its own through WiFi blips / caster hiccups
+    // without needing a physical button press.
     if (millis() - lastReceivedRTCM_ms > maxTimeBeforeHangup_ms) {
-      Serial.println(F("RTCM timeout — disconnecting"));
+      Serial.println(F("RTCM timeout — reconnecting"));
       if (ntripClient.connected()) ntripClient.stop();
-      ntripRunning = false;
-      digitalWrite(LED_PIN, LOW);
-      return;
+      lastReceivedRTCM_ms = millis(); // reset so we don't immediately re-trigger
+      delay(1000);                    // brief backoff before reconnect
+      continue;                       // back to top of while(ntripRunning)
     }
 
     delay(10);
