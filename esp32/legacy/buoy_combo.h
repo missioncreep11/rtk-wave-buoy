@@ -86,10 +86,19 @@ void initialize_gnss_uart_f() {
       SerialBT.println(F(" baud!"));
       gpsUARTOnline = true;
       
-      // Don't configure ports yet - just confirm connection
       Serial.println(F("GPS UART connected!"));
       SerialBT.println(F("GPS UART connected!"));
+
+      // Configure the UART we're talking to: accept RTCM3 in, send UBX out
+      myGNSS.setPortInput(COM_PORT_UART1, COM_TYPE_UBX | COM_TYPE_NMEA | COM_TYPE_RTCM3);
+      myGNSS.setUART1Output(COM_TYPE_UBX);
+      // Persist to flash so future boots don't depend on this reconfigure
+      myGNSS.saveConfiguration();
+
+      Serial.println(F("ZED-F9P: RTCM3 input enabled on UART1"));
+      SerialBT.println(F("ZED-F9P: RTCM3 input enabled on UART1"));
       return;
+      
     } else {
       Serial.println(F("  Failed"));
       SerialBT.println(F("GPS UART connected!"));

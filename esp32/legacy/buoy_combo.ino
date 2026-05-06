@@ -56,6 +56,7 @@ int maxTimeBeforeHangup_ms = 100000;
 const unsigned long ntripRetryInterval = 30000;
 unsigned long lastNTRIPAttempt = 0;
 long lastGPSPrint = 0;
+unsigned long lastFixStatusPrint = 0;
 
 // Configuration
 uint8_t type;
@@ -165,6 +166,27 @@ void loop() {
   // }
   
   monitor_connection_health();
+
+  // Print GPS fix status every 5 seconds
+  if (gpsUARTOnline && (millis() - lastFixStatusPrint > 5000)) {
+    lastFixStatusPrint = millis();
+    if (myGNSS.getPVT()) {  // single poll, populates everything below
+      uint8_t fixType  = myGNSS.getFixType();           // 0=no, 2=2D, 3=3D, 4=GNSS+DR
+      uint8_t carrSoln = myGNSS.getCarrierSolutionType(); // 0=none, 1=float, 2=FIXED
+      uint8_t sats     = myGNSS.getSIV();
+
+      const char* rtkStr = (carrSoln == 2) ? "FIXED" :
+                           (carrSoln == 1) ? "float" : "none";
+
+      Serial.print(F("[GPS] fix="));    Serial.print(fixType);
+      Serial.print(F(" rtk="));         Serial.print(rtkStr);
+      Serial.print(F(" sats="));        Serial.println(sats);
+
+      SerialBT.print(F("[GPS] fix="));  SerialBT.print(fixType);
+      SerialBT.print(F(" rtk="));       SerialBT.print(rtkStr);
+      SerialBT.print(F(" sats="));      SerialBT.println(sats);
+    }
+  }
   
   updateStatusLED();
 
