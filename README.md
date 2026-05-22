@@ -2,6 +2,37 @@
 
 A centimeter-level precision GPS data logging system for oceanographic applications, combining RTK GPS positioning with IMU sensor data collection. Developed at UCSD Scripps Institution of Oceanography and the Department of Mechnical Engineering both at U.C. San Diego.
 
+## Branch: `Base+PowerLog` (vs `main`)
+
+This branch extends `main` with a refactored ESP32 buoy firmware, real-time power logging, and more reliable cellular NTRIP on the SIM7000. Use this branch for field buoys that include the INA228 on the Qwiic bus.
+
+### Summary of changes
+
+| Area | `main` | `Base+PowerLog` |
+|------|--------|-----------------|
+| **ESP32 sketch layout** | `esp32/legacy/buoy_combo.ino` + `buoy_combo.h` | `esp32/buoy_combo/` (active sketch); legacy sketches under `esp32/legacy/` |
+| **Power monitoring** | None | **Adafruit INA228** on Qwiic (I2C); periodic `[PWR]` current, bus voltage, and power |
+| **Modem / NTRIP** | Stock `Botletics_modem_LTE` + `TCPconnect()` | **`BuoyModem`** — plain `AT+CIP*` TCP (avoids SSL path that breaks NTRIP port 2101) |
+| **LTE registration** | `CFUN=1` + Hologram APN only | **`configureNetwork()`** — LTE CAT-M, band 12 (US AT&T/T-Mobile), `CGATT`, auto operator search, boot diagnostics |
+| **GNSS (ZED-F9P)** | Basic UART `begin()` | Multi-baud search, **RTCM3 on UART1**, config saved to flash |
+| **Status output** | Minimal | `[NET]` uses **CGREG** + CSQ; `[GPS]` fix/RTK/sats every 5 s; `[RTCM]` throughput; modem `[DIAG]` if registration stalls |
+| **Bench / USB power** | — | `[PWR]` notes when INA228 is not on the active battery rail (expected on USB) |
+| **Sample UBX logs** | — | Example `dataLog00014`–`00024` `.ubx` / parsed CSV in `ubx_parsers/` |
+
+### New or improved behavior
+
+- **Power logging:** INA228 on SDA 23 / SCL 22 (ESP32 Thing Plus Qwiic). Logs every 5 s when the battery rail is energized; skips misleading readings on USB bench power.
+- **Reliable NTRIP:** `BuoyModem::tcpConnectPlain()` / `tcpSendPlain()` implement the SIM7000 CIP stack for non-SSL casters; validates caster HTTP response before marking NTRIP connected.
+- **Hologram / CAT-M:** On boot, modem is held in LTE-only CAT-M mode with band **12** by default (`LTE_CATM_BAND` in `buoy_combo.h`; use **13** for Verizon).
+- **Registration debug:** Boot prints CPIN, CFUN, CREG, CGREG, CSQ, CGATT, COPS, CNACT; repeats diagnostics every 30 s while CGREG is not registered.
+- **Graceful shutdown:** GPIO 0 button — closes NTRIP, disables GPRS, powers down modem, light sleep (Bluetooth stays on).
+
+### Libraries (additional on this branch)
+
+- **Adafruit INA228** (Arduino Library Manager)
+
+---
+
 ## Overview
 
 This system achieves centimeter-level positioning accuracy by receiving Real-Time Kinematic (RTK) corrections via the NTRIP protocol over cellular or WiFi networks. It has three main components:
@@ -18,6 +49,7 @@ This system achieves centimeter-level positioning accuracy by receiving Real-Tim
 - Botletics SIM7000 LTE Shield
 - SparkFun OpenLog Artemis (with built-in ICM-20948 IMU + AK09916 magnetometer)
 - SparkFun ESP32 Thing Plus
+- Adafruit INA228 breakout (Qwiic, for buoy battery/modem power logging on ESP32)
 - u-blox ANN-MB1-00-00 antenna with grounding plate
 - LiPo Battery 3.7V 6000mAh (for OpenLog Artemis + GPS)
 - LiPo Battery 3.7V 850mAh (for ESP32 + cellular modem)
@@ -27,8 +59,10 @@ This system achieves centimeter-level positioning accuracy by receiving Real-Tim
 ### Wiring
 
 - ZED-F9P → OpenLog Artemis via Qwiic/I2C (address 0x42)
-- ZED-F9P → ESP32 via serial UART for RTCM correction injection
-- Antenna → ZED-F9P antenna port
+- ZED-F9P → ESP32 via serial UART (GPIO 12 TX / 27 RX) for RTCM correction injection
+- INA228 → ESP32 Qwiic (I2C) for power monitoring
+- LTE antenna → SIM7000 (required for cellular registration)
+- GNSS antenna → ZED-F9P antenna port
 
 ---
 
@@ -58,6 +92,7 @@ This gives ~2MB for the app. This must be set each time you use a new machine.
 Install from the Arduino Library Manager:
 
 - BotleticsSIM7000 by Botletics
+- Adafruit INA228 by Adafruit
 - SparkFun u-blox GNSS Arduino Library by SparkFun Electronics
 - SparkFun u-blox GNSS v3 by SparkFun Electronics
 - SparkFun 9DoF IMU Breakout ICM 20948 Arduino Library by SparkFun Electronics
@@ -78,12 +113,18 @@ OpenLog_Artemis_GNSS_Logging_Modified/   # OLA firmware (Arduino sketch)
     upload_ola_firmware.py               # Apple Silicon: compile + upload script
 
 esp32/                                   # ESP32 sketches
-    buoy_combo.ino                       # Main buoy sketch (cellular NTRIP)
-    buoy_combo.h
-    esp32_rtk_wifi.ino                   # WiFi NTRIP + BLE command interface
-    esp32_rtk.ino
-    esp32_botletic.ino
-    esp32_rtk_button.ino
+    buoy_combo/                          # Main buoy sketch (cellular NTRIP + power log) — Base+PowerLog
+        buoy_combo.ino
+        buoy_combo.h
+    legacy/                              # Older / alternate sketches
+        buoy_combo.ino                   # (main branch copy; superseded by esp32/buoy_combo/)
+        buoy_combo.h
+        esp32_polaris_wifi.ino
+        esp32_rtk_wifi.ino
+        esp32_botletic.ino
+        esp32_rtk.ino
+        esp32_rtk_button.ino
+        ...
 
 accelerometer/                           # Datasheets and calibration notebook
     ICM-20948-Datasheet-v1.3.pdf
@@ -113,7 +154,7 @@ tutorials/                               # Student guides and reference docs
 
 ### secrets.h
 
-Create a `secrets.h` file in the `esp32/` folder with your NTRIP credentials:
+Create a `secrets.h` file in the `esp32/buoy_combo/` folder (Arduino sketch tab) with your NTRIP credentials:
 
 ```cpp
 #ifndef SECRETS_H
@@ -155,34 +196,52 @@ const char* casterUserPW = "your_password";
 ### Step 2: Upload ESP32 Sketch
 
 1. Connect the ESP32 to your computer via micro-B USB
-2. Upload the `buoy_combo` sketch:
-   - Board: **Adafruit ESP32 Feather** (Tools → Board)
-   - Partition Scheme: **No OTA (Large APP)**
+2. Open and upload the sketch in `esp32/buoy_combo/`:
+   - Board: **SparkFun ESP32 Thing Plus** (or compatible ESP32)
+   - Partition Scheme: **No OTA (Large APP)** if using WiFi/BLE sketches; default is usually fine for `buoy_combo`
    - Port: select the correct port (Tools → Port)
-3. Open the Serial Monitor at **9600 baud**
+3. Open the Serial Monitor at **115200 baud** (USB debug; modem UART remains 9600)
 4. Connect the battery — verify polarity before plugging in (red = positive)
 
 ### Step 3: Verify Connections
 
-Watch the ESP32 Serial Monitor for each stage:
+Watch the ESP32 Serial Monitor for each stage (allow 1–3 minutes for first LTE registration):
+
+**Modem config (boot):**
+```
+[MODEM] LTE CAT-M only, band 12
+[DIAG] CPIN: +CPIN: READY
+[DIAG] CGREG (LTE data — used by [NET]): +CGREG: ...
+```
 
 **Network:**
 ```
-Signal strength (RSSI): 31 (Excellent)
-Network connection confirmed!
+[NET] CSQ=25 CGREG=1 (home)
+[NET] connected
 ```
 
 **GPRS** (may take more than one attempt):
 ```
-GPRS enabled successfully!
+[GPRS] enabled
 ```
 
 **NTRIP:**
 ```
-TCP connection established, sending NTRIP request...
-Found '200' - HTTP OK
-NTRIP connection successful!
+[NTRIP] connecting to <host>:2101
+[NTRIP] connected
+[RTCM] ... B/10s backlog=0
 ```
+
+**GPS / RTK:**
+```
+[GPS] fix=3 rtk=FIXED sats=...
+```
+
+**Power (battery powered only):**
+```
+[PWR] I=... mA  V=... V  P=... mW
+```
+On USB bench power, `[PWR] (bench/USB — INA228 not on active battery rail)` is normal.
 
 ### Step 4: Monitor Fix Status (Optional)
 
@@ -291,9 +350,17 @@ x) Return to logging
 - Confirm antenna has a clear sky view
 
 **NTRIP connection fails**
-- Check cellular signal (RSSI should be > 10)
-- Verify SIM card is inserted and active
+- Check cellular signal (CSQ first value should be well below 99; 99 = no signal)
+- Verify SIM card is inserted and active (Hologram dashboard)
 - Check credentials in `secrets.h`
+- Confirm LTE antenna on SIM7000; try outdoors or near a window
+- If on Verizon, set `LTE_CATM_BAND` to `13` in `buoy_combo.h`
+
+**Modem not registered (`[NET] CSQ=99 CGREG=0`)**
+- Wait up to 3 minutes after boot for `CGREG=2` (searching) then `1` or `5`
+- Full power cycle: unplug USB/battery 30 s, then retry
+- Review boot `[DIAG]` lines (CPIN must be `READY`, CGREG should not stay `0,0` with CSQ `99,99`)
+- See branch notes above for CAT-M band and `configureNetwork()`
 
 **No RTK fix**
 - Ensure clear sky view with no obstructions

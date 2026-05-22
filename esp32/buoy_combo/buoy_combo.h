@@ -23,6 +23,11 @@
 #define I2C_SDA 23     // ESP32 Thing Plus (WRL-15663) Qwiic SDA
 #define I2C_SCL 22     // ESP32 Thing Plus Qwiic SCL
 
+// Hologram / US LTE CAT-M: 12 = AT&T/T-Mobile, 13 = Verizon
+#ifndef LTE_CATM_BAND
+#define LTE_CATM_BAND 12
+#endif
+
 // Plain AT+CIP* TCP for NTRIP. Botletics TCPconnect() uses SSL (AT+CACID/CAOPEN) when
 // BOTLETICS_SSL is 1 in the installed library, which fails on plain NTRIP port 2101.
 class BuoyModem : public Botletics_modem_LTE {
@@ -32,6 +37,62 @@ public:
   bool tcpConnectPlain(const char *server, uint16_t port);
   bool tcpConnectedPlain();
   bool tcpSendPlain(const char *packet, uint16_t len);
+
+  void printDiagnostics() {
+    const uint16_t t = 3000;
+    getReply(F("AT+CPIN?"), t);
+    Serial.print(F("[DIAG] CPIN: "));
+    Serial.println(replybuffer);
+    getReply(F("AT+CFUN?"), t);
+    Serial.print(F("[DIAG] CFUN: "));
+    Serial.println(replybuffer);
+    getReply(F("AT+CREG?"), t);
+    Serial.print(F("[DIAG] CREG (circuit): "));
+    Serial.println(replybuffer);
+    getReply(F("AT+CGREG?"), t);
+    Serial.print(F("[DIAG] CGREG (LTE data — used by [NET]): "));
+    Serial.println(replybuffer);
+    getReply(F("AT+CSQ"), t);
+    Serial.print(F("[DIAG] CSQ: "));
+    Serial.println(replybuffer);
+    getReply(F("AT+CGATT?"), t);
+    Serial.print(F("[DIAG] CGATT: "));
+    Serial.println(replybuffer);
+    getReply(F("AT+COPS?"), t);
+    Serial.print(F("[DIAG] COPS: "));
+    Serial.println(replybuffer);
+    getReply(F("AT+CNACT?"), t);
+    Serial.print(F("[DIAG] CNACT: "));
+    Serial.println(replybuffer);
+  }
+
+  bool configureLteCatM() {
+    Serial.print(F("[MODEM] LTE CAT-M only, band "));
+    Serial.println(LTE_CATM_BAND);
+    if (!setPreferredMode(38)) return false;
+    if (!setPreferredLTEMode(1)) return false;
+    if (!setOperatingBand("CAT-M", LTE_CATM_BAND)) return false;
+    sendCheckReply(F("AT+CGREG=2"), ok_reply, 3000);
+    return true;
+  }
+
+  void configureNetwork() {
+    setFunctionality(1);
+    delay(1000);
+    setNetworkSettings(F("hologram"));
+
+    if (!configureLteCatM()) {
+      Serial.println(F("[MODEM] WARN: LTE CAT-M band config failed"));
+      SerialBT.println(F("[MODEM] WARN: LTE CAT-M band config failed"));
+    }
+
+    sendCheckReply(F("AT+CGATT=1"), ok_reply, 15000);
+    sendCheckReply(F("AT+COPS=0"), ok_reply, 60000);
+
+    Serial.println(F("[MODEM] post-config diagnostics:"));
+    SerialBT.println(F("[MODEM] post-config diagnostics:"));
+    printDiagnostics();
+  }
 
 private:
   bool _cipStackUp = false;
@@ -270,6 +331,12 @@ void print_power_status_f() {
   float busV = ina228.getBusVoltage_V();
   float powerMw = ina228.getPower_mW();
 
+  if (busV < 0.5f) {
+    Serial.println(F("[PWR] (bench/USB — INA228 not on active battery rail)"));
+    SerialBT.println(F("[PWR] (bench/USB — INA228 not on active battery rail)"));
+    return;
+  }
+
   Serial.print(F("[PWR] I="));
   Serial.print(currentMa, 2);
   Serial.print(F(" mA  V="));
@@ -289,13 +356,18 @@ void print_power_status_f() {
 
 
 void network_status_check_f() {
-  // Serial.println("START network_status_check");
   if (networkConnected) return;
+
+  static unsigned long lastCheckMs = 0;
+  static unsigned long lastDiagMs = 0;
+  const unsigned long checkIntervalMs = 5000;
+
+  if (millis() - lastCheckMs < checkIntervalMs) return;
+  lastCheckMs = millis();
 
   uint8_t rssi = modem.getRSSI();
   uint8_t n    = modem.getNetworkStatus();
 
-  // Status codes: 0=not-reg, 1=home, 2=searching, 3=denied, 4=unknown, 5=roaming
   const __FlashStringHelper *label =
       (n == 1) ? F("home") :
       (n == 5) ? F("roaming") :
@@ -303,27 +375,32 @@ void network_status_check_f() {
       (n == 3) ? F("denied") :
                  F("not registered");
 
-  Serial.print(F("[NET] rssi="));    Serial.print(rssi);
-  Serial.print(F(" status="));        Serial.print(n);
-  Serial.print(F(" ("));              Serial.print(label);
+  Serial.print(F("[NET] CSQ="));
+  Serial.print(rssi);
+  Serial.print(F(" CGREG="));
+  Serial.print(n);
+  Serial.print(F(" ("));
+  Serial.print(label);
   Serial.println(F(")"));
-  SerialBT.print(F("[NET] rssi="));  SerialBT.print(rssi);
-  SerialBT.print(F(" status="));      SerialBT.print(n);
-  SerialBT.print(F(" ("));            SerialBT.print(label);
+  SerialBT.print(F("[NET] CSQ="));
+  SerialBT.print(rssi);
+  SerialBT.print(F(" CGREG="));
+  SerialBT.print(n);
+  SerialBT.print(F(" ("));
+  SerialBT.print(label);
   SerialBT.println(F(")"));
 
+  if (n == 0 && millis() - lastDiagMs > 30000) {
+    lastDiagMs = millis();
+    modem.printDiagnostics();
+  }
+
   if (n == 1 || n == 5) {
-    delay(3000);  // stability check
     if (modem.getNetworkStatus() == n) {
       networkConnected = true;
       Serial.println(F("[NET] connected"));
       SerialBT.println(F("[NET] connected"));
-    } else {
-      delay(5000);
     }
-  } else {
-    int waitTime = (n == 2) ? 10000 : (n == 3) ? 30000 : 5000;
-    delay(waitTime);
   }
 }
 
@@ -333,7 +410,6 @@ void enable_gprs_f() {
   // Poor signal: try again next loop
   uint8_t rssi = modem.getRSSI();
   if (rssi == 0 || rssi == 99) {
-    delay(5000);
     return;
   }
 

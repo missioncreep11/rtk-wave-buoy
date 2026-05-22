@@ -100,8 +100,8 @@ void setup() {
   Serial.println(F("Powering on modem..."));
   SerialBT.println(F("Powering on modem..."));
   modem.powerOn(BOTLETICS_PWRKEY);
+  delay(5000);
 
-  // Start modem serial
   modemSS.begin(115200, SERIAL_8N1, TX_MODEM, RX_MODEM);
   Serial.println(F("Configuring modem to 9600 baud"));
   SerialBT.println(F("Configuring modem to 9600 baud"));
@@ -127,10 +127,9 @@ void setup() {
     SerialBT.println(imei);
   }
 
-  modem.setFunctionality(1);
-  modem.setNetworkSettings(F("hologram"));
-  
-  Serial.println(F("Setup complete!\n"));
+  modem.configureNetwork();
+
+  Serial.println(F("Setup complete — waiting for CGREG registration\n"));
   SerialBT.println(F("Setup complete\n"));
 }
 
