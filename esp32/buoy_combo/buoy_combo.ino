@@ -1,7 +1,12 @@
 /* buoy_combo.ino */
+// NTRIP casters use plain TCP (e.g. port 2101). BotleticsSIM7000.h defaults BOTLETICS_SSL=1.
+#ifndef BOTLETICS_SSL
+#define BOTLETICS_SSL 0
+#endif
 #include "BotleticsSIM7000.h"
 #include <HardwareSerial.h>
 #include <Wire.h>
+#include <Adafruit_INA228.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #if defined(ARDUINO_ARCH_ESP32)
 #include "base64.h"
@@ -39,8 +44,9 @@ BluetoothSerial SerialBT;
 // Global Objects
 HardwareSerial modemSS(1);     // UART1 to modem
 HardwareSerial gpsSerial(2);   // UART2 to GPS
-Botletics_modem_LTE modem = Botletics_modem_LTE();
+BuoyModem modem;
 SFE_UBLOX_GNSS myGNSS;
+Adafruit_INA228 ina228;
 
 // Flags
 bool networkConnected = false;
@@ -48,6 +54,7 @@ bool gprsEnabled = false;
 bool gpsEnabled = false;
 bool ntripConnected = false;
 bool gpsUARTOnline = false;
+bool ina228Online = false;
 volatile bool shutdownRequested = false;
 
 // Timing
@@ -68,7 +75,7 @@ String device_name = "RTK-GPS-BT";
 
 void setup() {
   // USB Debug Serial
-  Serial.begin(9600);
+  Serial.begin(115200);
   SerialBT.begin(device_name);
   Serial.println("Connecting to bluetooth...");
   
@@ -83,7 +90,7 @@ void setup() {
   pinMode(SHUTDOWN_BTN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(SHUTDOWN_BTN), shutdownISR, FALLING);
 
-
+  initialize_ina228_f();
   initialize_gnss_uart_f();
 
   // Initialize Modem
@@ -167,10 +174,12 @@ void loop() {
   
   monitor_connection_health();
 
-  // Print GPS fix status every 5 seconds
-  if (gpsUARTOnline && (millis() - lastFixStatusPrint > 5000)) {
+  // Power + GPS status every 5 seconds
+  if (millis() - lastFixStatusPrint > 5000) {
     lastFixStatusPrint = millis();
-    if (myGNSS.getPVT()) {  // single poll, populates everything below
+    print_power_status_f();
+
+    if (gpsUARTOnline && myGNSS.getPVT()) {  // single poll, populates everything below
       uint8_t fixType  = myGNSS.getFixType();           // 0=no, 2=2D, 3=3D, 4=GNSS+DR
       uint8_t carrSoln = myGNSS.getCarrierSolutionType(); // 0=none, 1=float, 2=FIXED
       uint8_t sats     = myGNSS.getSIV();
