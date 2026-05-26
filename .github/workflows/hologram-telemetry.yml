@@ -3,6 +3,12 @@ name: Hologram telemetry → data.json
 on:
   repository_dispatch:
     types: [buoy-telemetry]
+  workflow_dispatch:
+    inputs:
+      test_payload:
+        description: "JSON telemetry payload (manual test)"
+        required: false
+        default: '{"id":"test-manual","fix":3,"rtk":"FIXED","sats":14,"lat":32.8651,"lon":-117.2573}'
 
 permissions:
   contents: write
@@ -15,7 +21,7 @@ jobs:
 
       - name: Merge payload into docs/data.json
         env:
-          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          PAYLOAD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_payload || toJson(github.event.client_payload) }}
         run: |
           python << 'PY'
           import json, os, time
