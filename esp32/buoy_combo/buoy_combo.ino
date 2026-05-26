@@ -34,6 +34,9 @@ BluetoothSerial SerialBT;
 #if !defined(HAS_TELEMETRY_URL)
 const char *telemetryUrl = "";
 #endif
+#if !defined(HAS_TELEMETRY_SECRET)
+const char *telemetrySecret = "";
+#endif
 #if !defined(HAS_HOLOGRAM_DEVICE_KEY)
 const char hologramDeviceKey[] = "";
 #endif

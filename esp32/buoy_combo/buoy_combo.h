@@ -171,6 +171,7 @@ void printDebugStatus();
 void updateStatusLED();
 
 extern const char *telemetryUrl;
+extern const char *telemetrySecret;
 extern const char hologramDeviceKey[];
 extern char imei[];
 
@@ -349,6 +350,13 @@ bool BuoyModem::httpPostJson(const char *fullUrl, const char *body) {
 
   sendCheckReply(F("AT+SHCHEAD"), ok_reply, 5000);
   sendCheckReply(F("AT+SHAHEAD=\"Content-Type\",\"application/json\""), ok_reply, 5000);
+  if (telemetrySecret && telemetrySecret[0] != '\0') {
+    snprintf(cmd, sizeof(cmd), "AT+SHAHEAD=\"X-Buoy-Secret\",\"%s\"", telemetrySecret);
+    if (!sendCheckReply(cmd, ok_reply, 5000)) {
+      sendCheckReply(F("AT+SHDISC"), ok_reply, 5000);
+      return false;
+    }
+  }
   sendCheckReply(F("AT+SHAHEAD=\"ngrok-skip-browser-warning\",\"true\""), ok_reply, 5000);
 
   // AT+SHBOD="...",<len> — escape quotes in JSON for the modem command.

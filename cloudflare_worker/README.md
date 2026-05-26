@@ -35,9 +35,7 @@ Update your buoy's firmware to send data to the new Cloudflare Worker URL, and c
    #define HAS_TELEMETRY_URL 1
    const char *telemetryUrl = "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev";
    ```
-3. Update your modem HTTP POST code in the firmware to include the `X-Buoy-Secret` header, matching the `BUOY_SECRET` you set in Cloudflare. (e.g. `AT+SHREQ` payload headers must be configured). 
-
-*Note: You may need to adjust `BuoyModem::sendHttpTelemetry` inside `esp32/buoy_combo/buoy_combo.cpp` to include the `X-Buoy-Secret` header during the HTTP request.*
+3. Set `telemetrySecret` in `secrets.h` to the same value as `BUOY_SECRET`. Firmware sends it as the `X-Buoy-Secret` header automatically.
 
 ## 4. Test the Worker
 

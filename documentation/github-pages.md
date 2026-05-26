@@ -76,15 +76,15 @@ Check:
 In `esp32/buoy_combo/secrets.h`:
 
 ```cpp
-// Set this to your Cloudflare Worker URL
 #define HAS_TELEMETRY_URL 1
 const char *telemetryUrl = "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev";
+#define HAS_TELEMETRY_SECRET 1
+const char *telemetrySecret = "same-as-cloudflare-BUOY_SECRET";
 
-// Leave empty
 const char hologramDeviceKey[] = "";
 ```
 
-Flash `buoy_combo`. Serial should show `[TELEM] POST OK` on interval. Note that you may need to add your `X-Buoy-Secret` header to the HTTP POST code in `buoy_combo.cpp`.
+Flash `buoy_combo`. Serial should show `[TELEM] POST OK` on interval.
 
 ## 7. Verify end-to-end
 
