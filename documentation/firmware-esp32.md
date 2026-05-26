@@ -27,15 +27,16 @@ Primary sketch: [`esp32/buoy_combo/`](../esp32/buoy_combo/).
 |---------|---------|
 | `casterHost`, `casterPort`, `mountPoint` | NTRIP caster |
 | `casterUser`, `casterUserPW` | NTRIP credentials |
-| `telemetryUrl` | HTTPS ingest URL (local portal via ngrok) |
-| `hologramDeviceKey` | 8-char Hologram CSR/router key (cloud or GitHub path) |
+| `telemetryUrl` | HTTPS ingest URL (ngrok local portal or Cloudflare Worker) |
+| `telemetrySecret` | Shared secret for Cloudflare Worker (`X-Buoy-Secret` header); leave empty for ngrok |
+| `hologramDeviceKey` | 8-char Hologram CSR/router key (cloud dashboard only) |
 | `TELEMETRY_INTERVAL_MS` | POST interval (default 60000 ms) |
 
 **Pick one telemetry path:**
 
-- Local dashboard: set `telemetryUrl`, leave `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
-- Hologram only: set `hologramDeviceKey`, clear `telemetryUrl`
-- GitHub Pages: Hologram key + Route — see [github-pages.md](github-pages.md)
+- Local dashboard: set `telemetryUrl`, leave `telemetrySecret` and `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
+- GitHub Pages: set `telemetryUrl` (Worker URL) and `telemetrySecret` — see [github-pages.md](github-pages.md)
+- Hologram dashboard only: set `hologramDeviceKey`, clear `telemetryUrl`
 
 ## Key implementation details
 
@@ -45,7 +46,7 @@ Wraps SIM7000 for:
 
 - `configureNetwork()` — LTE CAT-M, band, CGATT, operator search
 - `tcpConnectPlain` / `tcpSendPlain` — NTRIP without SSL
-- `httpPostJson(url, body)` — HTTPS telemetry via `AT+SH*` (parses host/path from full URL)
+- `httpPostJson(url, body)` — HTTPS telemetry via `AT+SH*` (parses host/path; sends `X-Buoy-Secret` when `telemetrySecret` is set)
 - `sendHologramCloudMessage` — Hologram cloud socket
 
 ### NTRIP

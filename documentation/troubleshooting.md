@@ -49,10 +49,12 @@ Use u-center for detailed receiver state. ZED LED: off = RTK fixed.
 
 | Symptom | Things to try |
 |---------|----------------|
-| `[TELEM] POST failed` | ngrok running; URL includes `/api/ingest`; update URL after ngrok restart |
+| `[TELEM] POST failed` | Check URL starts with `https://`; ngrok running for local portal; update URL after ngrok restart |
+| Worker returns 401 | `telemetrySecret` must match Cloudflare `BUOY_SECRET` |
 | GET on ingest returns 405 | Normal — buoy must **POST** JSON |
 | No local map | Run `test_ingest.ps1` first; check `local_portal/buoy.db` updates |
-| Hologram OK but no GitHub update | Route URL, PAT, `event_type: buoy-telemetry` — see [github-pages.md](github-pages.md) |
+| Cloudflare OK but no GitHub update | Cloudflare `GITHUB_OWNER` / `GITHUB_REPO`; PAT scope; workflow on default branch — see [github-pages.md](github-pages.md) |
+| Raw JSON stale in browser | Hard-refresh; URL-encode `+` in branch name (`Base%2BPowerLog`); match `docs/config.js` branch |
 
 ## OpenLog / SD
 

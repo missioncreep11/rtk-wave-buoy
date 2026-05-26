@@ -11,7 +11,7 @@ Documentation for the current field system: ESP32 + SIM7000 buoy firmware, OpenL
 | [firmware-esp32.md](firmware-esp32.md) | `esp32/buoy_combo` — NTRIP, LTE, INA228, telemetry |
 | [firmware-ola.md](firmware-ola.md) | OpenLog Artemis GNSS + IMU logging |
 | [local-portal.md](local-portal.md) | Local dashboard via Flask + ngrok (default telemetry) |
-| [github-pages.md](github-pages.md) | Optional public dashboard (Hologram → GitHub) |
+| [github-pages.md](github-pages.md) | Optional public dashboard (Cloudflare Worker → GitHub) |
 | [data-processing.md](data-processing.md) | UBX parsers, Python visualizers, magnetometer calibration |
 | [legacy-firmware.md](legacy-firmware.md) | Older ESP32 sketches in `esp32/legacy/` |
 | [rtk-primer.md](rtk-primer.md) | Short RTK background |

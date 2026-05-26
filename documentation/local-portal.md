@@ -70,7 +70,7 @@ Firmware uses the modem HTTPS stack (`AT+SH*`), not the NTRIP TCP socket. NTRIP 
 
 ## 5. Optional — Hologram cloud only
 
-Set `hologramDeviceKey` (CSR key from Hologram **Configuration → Router Credentials**) and clear `telemetryUrl`. View messages under SIM **Activity**. No local map unless you add a Hologram Route to your ngrok URL later.
+Set `hologramDeviceKey` (CSR key from Hologram **Configuration → Router Credentials**) and clear `telemetryUrl`. View messages under SIM **Activity** only — no local map or GitHub Pages update from this path.
 
 ## Testing checklist
 

@@ -7,7 +7,8 @@ Centimeter-level RTK positioning for ocean wave and tide work, with onboard SD l
 - **ESP32 + SIM7000** — NTRIP corrections, RTCM to ZED-F9P, power monitoring, JSON telemetry
 - **OpenLog Artemis** — High-rate GNSS UBX and IMU logs to microSD
 - **local_portal** — Default live dashboard on your laptop (Flask + ngrok)
-- **docs/** — Optional static dashboard on GitHub Pages (Hologram → workflow → `data.json`)
+- **docs/** — Optional static dashboard on GitHub Pages (Cloudflare Worker → workflow → `data.json`)
+- **cloudflare_worker/** — HTTPS proxy for buoy telemetry → GitHub Actions
 
 Full documentation: **[documentation/README.md](documentation/README.md)**
 
@@ -29,7 +30,7 @@ Details: [documentation/local-portal.md](documentation/local-portal.md)
 
 ## Optional: public GitHub dashboard
 
-No PC or ngrok required after setup. Buoy sends via Hologram Cloud; a GitHub workflow updates `docs/data.json`; Pages serves the map.
+No PC or ngrok required after setup. Buoy POSTs to a Cloudflare Worker; a GitHub workflow updates `docs/data.json`; Pages serves the map.
 
 **[documentation/github-pages.md](documentation/github-pages.md)**
 
@@ -40,6 +41,7 @@ esp32/buoy_combo/                          Main buoy firmware (cellular NTRIP + 
 esp32/legacy/                              Older WiFi / Polaris sketches
 OpenLog_Artemis_GNSS_Logging_Modified/     OLA GNSS + IMU logging
 local_portal/                              Flask ingest + dashboard
+cloudflare_worker/                         Optional buoy → GitHub proxy
 docs/                                      GitHub Pages site (index.html, data.json)
 .github/workflows/                         Pages deploy + telemetry workflow
 documentation/                             System documentation (start here)

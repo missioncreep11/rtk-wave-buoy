@@ -11,6 +11,7 @@ The buoy combines centimeter-level RTK positioning with onboard logging and opti
 | **OpenLog Artemis (OLA)** | Logs high-rate GNSS UBX and IMU data to microSD |
 | **INA228** | Battery/modem bus voltage, current, power (Qwiic on ESP32) |
 | **local_portal** | Default live dashboard on your PC (Flask + ngrok) |
+| **cloudflare_worker** | Optional HTTPS proxy (buoy → GitHub Actions) |
 | **docs/** (GitHub Pages) | Optional static public dashboard fed by `docs/data.json` |
 
 ## Data flows
@@ -45,16 +46,16 @@ Configure `telemetryUrl` in `secrets.h` (see [local-portal.md](local-portal.md))
 buoy_combo --TCP--> cloudsocket.hologram.io:9999 --> Hologram dashboard
 ```
 
-Set `hologramDeviceKey` and leave `telemetryUrl` empty. NTRIP pauses during each cloud message.
+Set `hologramDeviceKey` and leave `telemetryUrl` empty. NTRIP pauses during each cloud message. View payloads under SIM **Activity** in the Hologram dashboard.
 
 ### Telemetry — optional (public GitHub Pages)
 
 ```
-buoy --> Hologram Cloud --> Hologram Route --> GitHub repository_dispatch
+buoy_combo --HTTPS POST--> Cloudflare Worker --> GitHub repository_dispatch
       --> workflow updates docs/data.json --> GitHub Pages reads JSON
 ```
 
-GitHub Pages cannot accept POSTs from the buoy. See [github-pages.md](github-pages.md).
+The buoy POSTs JSON to a Cloudflare Worker (which holds the GitHub PAT). The worker triggers a GitHub Actions workflow that commits `docs/data.json`. See [github-pages.md](github-pages.md).
 
 ## Firmware loop (`buoy_combo`)
 
@@ -73,8 +74,9 @@ Each `loop()` iteration roughly:
 esp32/buoy_combo/              Main buoy sketch
 OpenLog_Artemis_GNSS_Logging_Modified/   OLA firmware
 local_portal/                  Flask ingest + dashboard
+cloudflare_worker/             Optional buoy → GitHub proxy
 docs/                          GitHub Pages static site + data.json
-.github/workflows/             Pages deploy + Hologram telemetry update
+.github/workflows/             Pages deploy + telemetry update
 ubx_parsers/                   UBX → CSV tools
 python_visualizer/             GNSS / IMU plotting scripts
 accelerometer/                 Magnetometer calibration notebook
