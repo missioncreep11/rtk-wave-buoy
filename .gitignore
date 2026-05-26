@@ -54,6 +54,11 @@ dkms.conf
 # Personal WiFi config
 secrets.h
 
+# Local telemetry portal
+local_portal/buoy.db
+local_portal/.venv/
+local_portal/__pycache__/
+
 # Jupyter notebooks (exclude personal notebooks, track student starter notebooks)
 *.ipynb
 !accelerometer/magcal_notebook.ipynb

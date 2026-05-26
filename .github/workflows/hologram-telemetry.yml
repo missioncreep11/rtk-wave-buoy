@@ -1,0 +1,63 @@
+name: Hologram telemetry → data.json
+
+on:
+  repository_dispatch:
+    types: [buoy-telemetry]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Merge payload into docs/data.json
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          python << 'PY'
+          import json, os, time
+          from datetime import datetime, timezone
+
+          raw = os.environ.get("PAYLOAD", "{}")
+          try:
+              payload = json.loads(raw) if raw else {}
+          except json.JSONDecodeError:
+              payload = {"payload": raw}
+
+          # Hologram may nest the buoy JSON under "payload" as a string
+          if isinstance(payload.get("payload"), str):
+              try:
+                  inner = json.loads(payload["payload"])
+                  payload = {**payload, **inner}
+              except json.JSONDecodeError:
+                  pass
+
+          out = {
+              "device_id": payload.get("id") or payload.get("device_id") or "unknown",
+              "received": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+              "fix": payload.get("fix"),
+              "rtk": payload.get("rtk"),
+              "sats": payload.get("sats"),
+              "lat": payload.get("lat"),
+              "lon": payload.get("lon"),
+              "alt_m": payload.get("alt_m"),
+              "bus_v": payload.get("bus_v"),
+              "power_mw": payload.get("power_mw"),
+              "rssi": payload.get("rssi"),
+              "ntrip": payload.get("ntrip"),
+          }
+          with open("docs/data.json", "w", encoding="utf-8") as f:
+              json.dump(out, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data.json
+          git diff --staged --quiet || git commit -m "Update buoy telemetry from Hologram"
+          git push

@@ -22,6 +22,35 @@
 #define SHUTDOWN_BTN 0 // for shutdown
 #define I2C_SDA 23     // ESP32 Thing Plus (WRL-15663) Qwiic SDA
 #define I2C_SCL 22     // ESP32 Thing Plus Qwiic SCL
+#ifndef BOTLETICS_PWRKEY
+#define BOTLETICS_PWRKEY 18
+#endif
+#ifndef MODEM_RST_PIN
+#define MODEM_RST_PIN 5
+#endif
+
+// Zombie PDP recovery (override before #include "buoy_combo.h" if needed)
+#ifndef DATA_PATH_STALE_MS
+#define DATA_PATH_STALE_MS (5UL * 60UL * 1000UL)
+#endif
+#ifndef GPRS_REFRESH_COOLDOWN_MS
+#define GPRS_REFRESH_COOLDOWN_MS (2UL * 60UL * 1000UL)
+#endif
+#ifndef NTRIP_FAILURES_BEFORE_HARD_RESET
+#define NTRIP_FAILURES_BEFORE_HARD_RESET 10
+#endif
+#ifndef MODEM_HARD_RECOVER_COOLDOWN_MS
+#define MODEM_HARD_RECOVER_COOLDOWN_MS (10UL * 60UL * 1000UL)
+#endif
+#ifndef NETWORK_RECHECK_MS
+#define NETWORK_RECHECK_MS 30000UL
+#endif
+#ifndef CGREG_BAD_STREAK_LIMIT
+#define CGREG_BAD_STREAK_LIMIT 2
+#endif
+#ifndef CELLULAR_LINK_ALIVE_MS
+#define CELLULAR_LINK_ALIVE_MS 120000UL
+#endif
 
 // Hologram / US LTE CAT-M: 12 = AT&T/T-Mobile, 13 = Verizon
 #ifndef LTE_CATM_BAND
@@ -37,6 +66,8 @@ public:
   bool tcpConnectPlain(const char *server, uint16_t port);
   bool tcpConnectedPlain();
   bool tcpSendPlain(const char *packet, uint16_t len);
+  bool sendHologramCloudMessage(const char *msg, uint16_t len);
+  bool httpPostJson(const char *fullUrl, const char *body);
 
   void printDiagnostics() {
     const uint16_t t = 3000;
@@ -76,6 +107,8 @@ public:
     return true;
   }
 
+  void invalidateCipStack() { _cipStackUp = false; }
+
   void configureNetwork() {
     setFunctionality(1);
     delay(1000);
@@ -104,6 +137,9 @@ extern bool gpsEnabled;
 extern bool ntripConnected;
 extern bool gpsUARTOnline;
 extern unsigned long lastNTRIPAttempt;
+extern unsigned long lastCellularActivity_ms;
+extern unsigned long lastGprsEnabled_ms;
+extern uint8_t consecutiveNtripFailures;
 extern long lastReceivedRTCM_ms;
 extern int maxTimeBeforeHangup_ms;
 extern const unsigned long ntripRetryInterval;
@@ -126,8 +162,17 @@ void print_power_status_f();
 void beginNTRIPClient();
 void handleNTRIPData();
 void monitor_connection_health();
+void noteCellularActivity();
+void invalidateDataPath(const __FlashStringHelper *reason);
+void refreshGprs_f(const __FlashStringHelper *reason);
+void modemHardRecover_f(const __FlashStringHelper *reason);
+void post_telemetry_f();
 void printDebugStatus();
 void updateStatusLED();
+
+extern const char *telemetryUrl;
+extern const char hologramDeviceKey[];
+extern char imei[];
 
 bool BuoyModem::ensurePdpActive() {
   // GPRS uses AT+CNACT; activating again when already active returns "operation not allowed".
@@ -236,6 +281,134 @@ bool BuoyModem::tcpSendPlain(const char *packet, uint16_t len) {
         strstr(replybuffer, "CLOSED")) return false;
   }
   return false;
+}
+
+bool BuoyModem::httpPostJson(const char *fullUrl, const char *body) {
+  if (!fullUrl || !body || fullUrl[0] == '\0') return false;
+
+  const char *p = fullUrl;
+  bool ssl = false;
+  if (strncmp(p, "https://", 8) == 0) {
+    p += 8;
+    ssl = true;
+  } else if (strncmp(p, "http://", 7) == 0) {
+    p += 7;
+  }
+
+  char host[96];
+  const char *path = "/";
+  const char *slash = strchr(p, '/');
+  if (slash) {
+    size_t hostLen = (size_t)(slash - p);
+    if (hostLen == 0 || hostLen >= sizeof(host)) return false;
+    memcpy(host, p, hostLen);
+    host[hostLen] = '\0';
+    path = slash;
+  } else {
+    strncpy(host, p, sizeof(host) - 1);
+    host[sizeof(host) - 1] = '\0';
+  }
+
+  if (!ssl) {
+    char url[192];
+    snprintf(url, sizeof(url), "http://%s%s", host, path);
+    return postData("POST", url, body);
+  }
+
+  // SIM7000 HTTPS via AT+SH* (Botletics postData HTTPS is unreliable on many builds).
+  if (!ensurePdpActive()) {
+    Serial.println(F("[TELEM] PDP not active"));
+    return false;
+  }
+
+  sendCheckReply(F("AT+HTTPTERM"), ok_reply, 3000);
+  sendCheckReply(F("AT+SHDISC"), ok_reply, 5000);
+
+  sendCheckReply(F("AT+CSSLCFG=\"ignorertctime\",1,1"), ok_reply, 5000);
+  sendCheckReply(F("AT+CSSLCFG=\"sslversion\",1,3"), ok_reply, 5000);
+
+  char cmd[160];
+  snprintf(cmd, sizeof(cmd), "AT+CSSLCFG=\"sni\",1,\"%s\"", host);
+  sendCheckReply(cmd, ok_reply, 5000);
+
+  sendCheckReply(F("AT+SHSSL=1,\"\""), ok_reply, 5000);
+
+  size_t bodyLen = strlen(body);
+  snprintf(cmd, sizeof(cmd), "AT+SHCONF=\"BODYLEN\",%u", (unsigned)bodyLen);
+  if (!sendCheckReply(cmd, ok_reply, 5000)) return false;
+  sendCheckReply(F("AT+SHCONF=\"HEADERLEN\",350"), ok_reply, 5000);
+
+  snprintf(cmd, sizeof(cmd), "AT+SHCONF=\"URL\",\"https://%s\"", host);
+  if (!sendCheckReply(cmd, ok_reply, 10000)) return false;
+
+  if (!sendCheckReply(F("AT+SHCONN"), ok_reply, 60000)) {
+    Serial.println(F("[TELEM] SHCONN failed"));
+    sendCheckReply(F("AT+SHDISC"), ok_reply, 5000);
+    return false;
+  }
+
+  sendCheckReply(F("AT+SHCHEAD"), ok_reply, 5000);
+  sendCheckReply(F("AT+SHAHEAD=\"Content-Type\",\"application/json\""), ok_reply, 5000);
+  sendCheckReply(F("AT+SHAHEAD=\"ngrok-skip-browser-warning\",\"true\""), ok_reply, 5000);
+
+  // AT+SHBOD="...",<len> — escape quotes in JSON for the modem command.
+  char bodCmd[520];
+  int pos = snprintf(bodCmd, sizeof(bodCmd), "AT+SHBOD=\"");
+  for (size_t i = 0; body[i] && pos < (int)sizeof(bodCmd) - 8; i++) {
+    if (body[i] == '"' || body[i] == '\\') {
+      bodCmd[pos++] = '\\';
+    }
+    bodCmd[pos++] = body[i];
+  }
+  pos += snprintf(bodCmd + pos, sizeof(bodCmd) - pos, "\",%u", (unsigned)bodyLen);
+  if (!sendCheckReply(bodCmd, ok_reply, 15000)) {
+    Serial.println(F("[TELEM] SHBOD failed"));
+    sendCheckReply(F("AT+SHDISC"), ok_reply, 5000);
+    return false;
+  }
+
+  snprintf(cmd, sizeof(cmd), "AT+SHREQ=\"%s\",3", path);
+  if (!sendCheckReply(cmd, ok_reply, 60000)) {
+    Serial.println(F("[TELEM] SHREQ failed"));
+    sendCheckReply(F("AT+SHDISC"), ok_reply, 5000);
+    return false;
+  }
+
+  // Wait for +SHREQ: "POST",200,...
+  bool ok = false;
+  uint32_t deadline = millis() + 30000;
+  while ((int32_t)(deadline - millis()) > 0) {
+    readline(2000);
+    if (replybuffer[0] == 0) continue;
+    if (strstr(replybuffer, "SHREQ") && strstr(replybuffer, "200")) {
+      ok = true;
+      break;
+    }
+    if (strstr(replybuffer, "ERROR") || strstr(replybuffer, "CME ERROR")) {
+      break;
+    }
+  }
+
+  if (!ok) {
+    Serial.print(F("[TELEM] modem: "));
+    Serial.println(replybuffer);
+  }
+
+  sendCheckReply(F("AT+SHDISC"), ok_reply, 5000);
+  return ok;
+}
+
+bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
+  if (!tcpConnectPlain("cloudsocket.hologram.io", 9999)) return false;
+  if (!tcpSendPlain(msg, len)) {
+    sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+    return false;
+  }
+  delay(1500);
+  readline(3000);
+  bool ok = (strstr(replybuffer, "[0,0]") != nullptr);
+  sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+  return ok;
 }
 
 void initialize_gnss_uart_f() {
@@ -355,12 +528,118 @@ void print_power_status_f() {
 }
 
 
-void network_status_check_f() {
-  if (networkConnected) return;
+static void ntripAttemptFailed() {
+  if (consecutiveNtripFailures < 255) {
+    consecutiveNtripFailures++;
+  }
+  Serial.print(F("[NTRIP] fail streak="));
+  Serial.println(consecutiveNtripFailures);
+  SerialBT.print(F("[NTRIP] fail streak="));
+  SerialBT.println(consecutiveNtripFailures);
+}
 
+void noteCellularActivity() {
+  lastCellularActivity_ms = millis();
+}
+
+void invalidateDataPath(const __FlashStringHelper *reason) {
+  Serial.print(F("[DATA] invalidate: "));
+  Serial.println(reason);
+  SerialBT.print(F("[DATA] invalidate: "));
+  SerialBT.println(reason);
+
+  if (ntripConnected) {
+    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+    ntripConnected = false;
+  }
+  modem.invalidateCipStack();
+  if (gprsEnabled) {
+    modem.enableGPRS(false);
+    gprsEnabled = false;
+  }
+  lastNTRIPAttempt = 0;
+}
+
+void refreshGprs_f(const __FlashStringHelper *reason) {
+  static unsigned long lastRefreshMs = 0;
+
+  if (millis() - lastRefreshMs < GPRS_REFRESH_COOLDOWN_MS) {
+    Serial.println(F("[GPRS] refresh skipped (cooldown)"));
+    SerialBT.println(F("[GPRS] refresh skipped (cooldown)"));
+    return;
+  }
+  lastRefreshMs = millis();
+
+  Serial.print(F("[GPRS] refresh: "));
+  Serial.println(reason);
+  SerialBT.print(F("[GPRS] refresh: "));
+  SerialBT.println(reason);
+
+  invalidateDataPath(reason);
+}
+
+void modemHardRecover_f(const __FlashStringHelper *reason) {
+  static unsigned long lastHardMs = 0;
+
+  if (millis() - lastHardMs < MODEM_HARD_RECOVER_COOLDOWN_MS) {
+    Serial.println(F("[MODEM] hard recover skipped (cooldown)"));
+    SerialBT.println(F("[MODEM] hard recover skipped (cooldown)"));
+    return;
+  }
+  lastHardMs = millis();
+
+  Serial.print(F("[MODEM] hard recover: "));
+  Serial.println(reason);
+  SerialBT.print(F("[MODEM] hard recover: "));
+  SerialBT.println(reason);
+
+  invalidateDataPath(reason);
+  networkConnected = false;
+  consecutiveNtripFailures = 0;
+
+  modem.sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
+  delay(500);
+
+  pinMode(MODEM_RST_PIN, OUTPUT);
+  digitalWrite(MODEM_RST_PIN, LOW);
+  delay(300);
+  digitalWrite(MODEM_RST_PIN, HIGH);
+  delay(3000);
+
+  modem.configureNetwork();
+  Serial.println(F("[MODEM] hard recover done — waiting for CGREG"));
+  SerialBT.println(F("[MODEM] hard recover done — waiting for CGREG"));
+}
+
+static bool cgregRegistered(uint8_t n) { return n == 1 || n == 5; }
+
+static bool cellularLinkAlive() {
+  return (ntripConnected &&
+          (millis() - lastReceivedRTCM_ms < (long)CELLULAR_LINK_ALIVE_MS)) ||
+         (lastCellularActivity_ms > 0 &&
+          (millis() - lastCellularActivity_ms < CELLULAR_LINK_ALIVE_MS));
+}
+
+// CGREG can read 0 transiently while the CIP/NTRIP socket is still delivering RTCM.
+static bool cgregLossConfirmed(uint8_t n) {
+  static uint8_t badStreak = 0;
+
+  if (cgregRegistered(n)) {
+    badStreak = 0;
+    return false;
+  }
+  if (cellularLinkAlive()) {
+    return false;
+  }
+  badStreak++;
+  return badStreak >= CGREG_BAD_STREAK_LIMIT;
+}
+
+void network_status_check_f() {
   static unsigned long lastCheckMs = 0;
   static unsigned long lastDiagMs = 0;
-  const unsigned long checkIntervalMs = 5000;
+  static unsigned long lastCgregIgnoreLogMs = 0;
+  const unsigned long checkIntervalMs = networkConnected ? NETWORK_RECHECK_MS : 5000UL;
 
   if (millis() - lastCheckMs < checkIntervalMs) return;
   lastCheckMs = millis();
@@ -396,11 +675,172 @@ void network_status_check_f() {
   }
 
   if (n == 1 || n == 5) {
-    if (modem.getNetworkStatus() == n) {
+    if (!networkConnected) {
       networkConnected = true;
       Serial.println(F("[NET] connected"));
       SerialBT.println(F("[NET] connected"));
     }
+  } else if (networkConnected) {
+    if (cellularLinkAlive()) {
+      if (millis() - lastCgregIgnoreLogMs > 60000) {
+        lastCgregIgnoreLogMs = millis();
+        Serial.print(F("[NET] CGREG="));
+        Serial.print(n);
+        Serial.println(F(" (ignored, RTCM active)"));
+        SerialBT.print(F("[NET] CGREG="));
+        SerialBT.print(n);
+        SerialBT.println(F(" (ignored, RTCM active)"));
+      }
+    } else if (cgregLossConfirmed(n)) {
+      Serial.println(F("[NET] registration lost"));
+      SerialBT.println(F("[NET] registration lost"));
+      invalidateDataPath(F("CGREG lost"));
+      networkConnected = false;
+    }
+  }
+}
+
+void post_telemetry_f() {
+  const bool useHttp =
+      (telemetryUrl != nullptr && telemetryUrl[0] != '\0');
+  const bool useHologram = (hologramDeviceKey[0] != '\0');
+  if (!useHttp && !useHologram) {
+    return;
+  }
+  if (!gprsEnabled) {
+    return;
+  }
+
+#ifndef TELEMETRY_INTERVAL_MS
+#define TELEMETRY_INTERVAL_MS 60000UL
+#endif
+
+  static unsigned long lastTelemetryMs = 0;
+  if (millis() - lastTelemetryMs < TELEMETRY_INTERVAL_MS) {
+    return;
+  }
+  lastTelemetryMs = millis();
+
+  uint8_t fixType = 0;
+  uint8_t carrSoln = 0;
+  uint8_t sats = 0;
+  bool havePvt = false;
+  double lat = 0.0;
+  double lon = 0.0;
+  double altM = 0.0;
+
+  if (gpsUARTOnline && myGNSS.getPVT()) {
+    havePvt = true;
+    fixType = myGNSS.getFixType();
+    carrSoln = myGNSS.getCarrierSolutionType();
+    sats = myGNSS.getSIV();
+    lat = myGNSS.getLatitude() / 10000000.0;
+    lon = myGNSS.getLongitude() / 10000000.0;
+    altM = myGNSS.getAltitudeMSL() / 1000.0;
+  }
+
+  const char *rtkStr =
+      (carrSoln == 2) ? "FIXED" : (carrSoln == 1) ? "float" : "none";
+
+  float busV = 0.0f;
+  float powerMw = 0.0f;
+  if (ina228Online) {
+    busV = ina228.getBusVoltage_V();
+    if (busV >= 0.5f) {
+      powerMw = ina228.getPower_mW();
+    } else {
+      busV = 0.0f;
+    }
+  }
+
+  uint8_t rssi = modem.getRSSI();
+  int ntrip = ntripConnected ? 1 : 0;
+
+  char body[300];
+  int n;
+  if (havePvt && fixType >= 2) {
+    n = snprintf(
+        body, sizeof(body),
+        "{\"id\":\"%s\",\"fix\":%u,\"rtk\":\"%s\",\"sats\":%u,"
+        "\"lat\":%.7f,\"lon\":%.7f,\"alt_m\":%.2f,"
+        "\"bus_v\":%.3f,\"power_mw\":%.1f,\"rssi\":%u,\"ntrip\":%d}",
+        imei, fixType, rtkStr, sats, lat, lon, altM, busV, powerMw, rssi, ntrip);
+  } else {
+    n = snprintf(
+        body, sizeof(body),
+        "{\"id\":\"%s\",\"fix\":%u,\"rtk\":\"%s\",\"sats\":%u,"
+        "\"bus_v\":%.3f,\"power_mw\":%.1f,\"rssi\":%u,\"ntrip\":%d}",
+        imei, fixType, rtkStr, sats, busV, powerMw, rssi, ntrip);
+  }
+
+  if (n <= 0 || n >= (int)sizeof(body)) {
+    Serial.println(F("[TELEM] JSON build failed"));
+    return;
+  }
+
+  // HTTP POST to local portal (ngrok). Pause NTRIP briefly — SIM7000 HTTP stack
+  // often conflicts with an open CIP NTRIP socket.
+  if (useHttp) {
+    bool wasNtrip = ntripConnected;
+    if (wasNtrip) {
+      modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+      ntripConnected = false;
+      delay(500);
+    }
+
+    Serial.println(F("[TELEM] HTTP POST..."));
+    if (modem.httpPostJson(telemetryUrl, body)) {
+      Serial.println(F("[TELEM] POST OK"));
+      SerialBT.println(F("[TELEM] POST OK"));
+      noteCellularActivity();
+    } else {
+      Serial.println(F("[TELEM] POST failed"));
+      SerialBT.println(F("[TELEM] POST failed"));
+    }
+
+    if (wasNtrip) {
+      lastNTRIPAttempt = 0;
+    }
+    return;
+  }
+
+  // Optional: Hologram Cloud socket only (view in Hologram dashboard)
+  char inner[300];
+  int innerLen = 0;
+  for (int i = 0; i < n && innerLen < (int)sizeof(inner) - 2; i++) {
+    char c = body[i];
+    if (c == '"') {
+      inner[innerLen++] = '\\';
+      inner[innerLen++] = '"';
+    } else {
+      inner[innerLen++] = c;
+    }
+  }
+  inner[innerLen] = '\0';
+
+  char msg[380];
+  n = snprintf(msg, sizeof(msg), "{\"k\":\"%s\",\"d\":\"%s\"}\n\n",
+               hologramDeviceKey, inner);
+  if (n <= 0 || n >= (int)sizeof(msg)) {
+    return;
+  }
+
+  bool wasNtrip = ntripConnected;
+  if (wasNtrip) {
+    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+    ntripConnected = false;
+    delay(500);
+  }
+
+  Serial.println(F("[TELEM] Hologram cloud..."));
+  bool ok = modem.sendHologramCloudMessage(msg, (uint16_t)n);
+  Serial.println(ok ? F("[TELEM] Hologram OK") : F("[TELEM] Hologram failed"));
+  SerialBT.println(ok ? F("[TELEM] Hologram OK") : F("[TELEM] Hologram failed"));
+  if (ok) {
+    noteCellularActivity();
+  }
+  if (wasNtrip) {
+    lastNTRIPAttempt = 0;
   }
 }
 
@@ -426,6 +866,9 @@ void enable_gprs_f() {
   for (int attempt = 1; attempt <= 3; attempt++) {
     if (modem.enableGPRS(true)) {
       gprsEnabled = true;
+      lastGprsEnabled_ms = millis();
+      noteCellularActivity();
+      consecutiveNtripFailures = 0;
       Serial.println(F("[GPRS] enabled"));
       SerialBT.println(F("[GPRS] enabled"));
       delay(2000);
@@ -450,6 +893,7 @@ void beginNTRIPClient() {
   if (!modem.tcpConnectPlain(casterHost, casterPort)) {
     Serial.println(F("[NTRIP] TCP connect failed"));
     SerialBT.println(F("[NTRIP] TCP connect failed"));
+    ntripAttemptFailed();
     return;
   }
   delay(1000);
@@ -469,6 +913,7 @@ void beginNTRIPClient() {
   if (!modem.tcpSendPlain(ntripRequest.c_str(), ntripRequest.length())) {
     Serial.println(F("[NTRIP] send failed"));
     SerialBT.println(F("[NTRIP] send failed"));
+    ntripAttemptFailed();
     return;
   }
 
@@ -479,6 +924,7 @@ void beginNTRIPClient() {
     Serial.println(F("[NTRIP] no response from caster"));
     SerialBT.println(F("[NTRIP] no response from caster"));
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    ntripAttemptFailed();
     return;
   }
 
@@ -493,6 +939,7 @@ void beginNTRIPClient() {
   if (bytesRead == 0) {
     Serial.println(F("[NTRIP] empty read"));
     SerialBT.println(F("[NTRIP] empty read"));
+    ntripAttemptFailed();
     return;
   }
 
@@ -508,19 +955,24 @@ void beginNTRIPClient() {
     Serial.println(F("[NTRIP] connected"));
     SerialBT.println(F("[NTRIP] connected"));
     ntripConnected = true;
+    consecutiveNtripFailures = 0;
     lastReceivedRTCM_ms = millis();
+    noteCellularActivity();
   } else if (unauth) {
     Serial.println(F("[NTRIP] 401 unauthorized"));
     SerialBT.println(F("[NTRIP] 401 unauthorized"));
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    ntripAttemptFailed();
   } else if (notfound) {
     Serial.println(F("[NTRIP] 404 mount not found"));
     SerialBT.println(F("[NTRIP] 404 mount not found"));
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    ntripAttemptFailed();
   } else {
     Serial.println(F("[NTRIP] unrecognized response"));
     SerialBT.println(F("[NTRIP] unrecognized response"));
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    ntripAttemptFailed();
   }
 }
 
@@ -535,6 +987,7 @@ void handleNTRIPData() {
       SerialBT.println(F("[NTRIP] RTCM timeout, disconnecting"));
       modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
       ntripConnected = false;
+      ntripAttemptFailed();
     }
     return;
   }
@@ -554,7 +1007,10 @@ void handleNTRIPData() {
     }
   }
 
-  if (totalSent > 0) lastReceivedRTCM_ms = millis();
+  if (totalSent > 0) {
+    lastReceivedRTCM_ms = millis();
+    noteCellularActivity();
+  }
 
   // Periodic throughput line so we know RTCM is flowing without spamming every loop.
   static unsigned long lastRtcmReport = 0;
@@ -571,7 +1027,6 @@ void handleNTRIPData() {
 }
 
 void monitor_connection_health() {
-  if (ntripConnected) return;
   if (!networkConnected) return;
 
   static unsigned long lastHealthCheck = 0;
@@ -581,16 +1036,66 @@ void monitor_connection_health() {
   uint8_t status = modem.getNetworkStatus();
   uint8_t rssi   = modem.getRSSI();
   Serial.print(F("[HEALTH] net="));    Serial.print(status);
-  Serial.print(F(" rssi="));            Serial.println(rssi);
+  Serial.print(F(" rssi="));            Serial.print(rssi);
+  Serial.print(F(" gprs="));            Serial.print(gprsEnabled ? 1 : 0);
+  Serial.print(F(" ntrip="));           Serial.print(ntripConnected ? 1 : 0);
+  Serial.print(F(" fail="));            Serial.println(consecutiveNtripFailures);
   SerialBT.print(F("[HEALTH] net="));  SerialBT.print(status);
-  SerialBT.print(F(" rssi="));          SerialBT.println(rssi);
+  SerialBT.print(F(" rssi="));          SerialBT.print(rssi);
+  SerialBT.print(F(" gprs="));          SerialBT.print(gprsEnabled ? 1 : 0);
+  SerialBT.print(F(" ntrip="));         SerialBT.print(ntripConnected ? 1 : 0);
+  SerialBT.print(F(" fail="));          SerialBT.println(consecutiveNtripFailures);
 
-  if (status != 1 && status != 5) {
-    Serial.println(F("[HEALTH] network lost"));
-    SerialBT.println(F("[HEALTH] network lost"));
-    networkConnected = false;
-    gprsEnabled = false;
-    ntripConnected = false;
+  if (!cgregRegistered(status)) {
+    if (cellularLinkAlive()) {
+      static unsigned long lastIgnoreLogMs = 0;
+      if (millis() - lastIgnoreLogMs > 60000) {
+        lastIgnoreLogMs = millis();
+        Serial.print(F("[HEALTH] CGREG="));
+        Serial.print(status);
+        Serial.println(F(" ignored (RTCM active)"));
+        SerialBT.print(F("[HEALTH] CGREG="));
+        SerialBT.print(status);
+        SerialBT.println(F(" ignored (RTCM active)"));
+      }
+    } else if (cgregLossConfirmed(status)) {
+      Serial.println(F("[HEALTH] network lost"));
+      SerialBT.println(F("[HEALTH] network lost"));
+      invalidateDataPath(F("CGREG health"));
+      networkConnected = false;
+      return;
+    } else {
+      return;
+    }
+  }
+
+  // CNACT (wirelessConnStatus) is not the same path as NTRIP's CIP stack — CNACT can
+  // read 0.0.0.0 while RTCM is flowing. Only refresh when there is no recent payload.
+  if (gprsEnabled && !modem.wirelessConnStatus()) {
+    if (!cellularLinkAlive()) {
+      refreshGprs_f(F("PDP inactive"));
+      return;
+    }
+  }
+
+  if (gprsEnabled) {
+    unsigned long activityMs = lastCellularActivity_ms;
+    if (activityMs == 0) {
+      activityMs = lastGprsEnabled_ms;
+    }
+    const bool expectingData =
+        ntripConnected ||
+        (millis() - lastNTRIPAttempt < ntripRetryInterval * 2UL);
+    if (expectingData && activityMs > 0 &&
+        millis() - activityMs > DATA_PATH_STALE_MS) {
+      refreshGprs_f(F("data path stale"));
+      return;
+    }
+  }
+
+  if (!ntripConnected && gprsEnabled &&
+      consecutiveNtripFailures >= NTRIP_FAILURES_BEFORE_HARD_RESET) {
+    modemHardRecover_f(F("NTRIP failures"));
   }
 }
 

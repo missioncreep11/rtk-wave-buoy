@@ -227,8 +227,8 @@ if __name__ == "__main__":
         infile = sys.argv[1]
         outfile = infile.replace('.ubx', '_parsed.csv')
     else:
-        infile = "dataLog00024.ubx"
-        outfile = "dataLog00024_parsed.csv"
+        infile = "dataLog00051.ubx"
+        outfile = "dataLog00051_parsed.csv"
     
     print(f"Input:  {infile}")
     print(f"Output: {outfile}\n")

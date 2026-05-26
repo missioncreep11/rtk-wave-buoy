@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RTK Buoy — Hologram</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #0f1419; color: #e7ecf3; }
+    header { padding: 1rem 1.25rem; border-bottom: 1px solid #2a3548; }
+    h1 { margin: 0; font-size: 1.2rem; }
+    .muted { color: #8b9cb3; font-size: 0.9rem; }
+    main { max-width: 960px; margin: 0 auto; padding: 1rem; display: grid; gap: 1rem; }
+    #map { height: 360px; border-radius: 8px; border: 1px solid #2a3548; }
+    .card { background: #1a2332; border: 1px solid #2a3548; border-radius: 8px; padding: 1rem; }
+    .row { display: flex; justify-content: space-between; padding: 0.3rem 0; border-bottom: 1px solid #243044; }
+    .row:last-child { border-bottom: none; }
+    .val { color: #3d9ee8; }
+    .stale { color: #e8b84d; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RTK Wave Buoy</h1>
+    <p class="muted" id="status">Loading data.json…</p>
+  </header>
+  <main>
+    <div id="map"></div>
+    <div class="card" id="metrics"></div>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="config.js"></script>
+  <script>
+    const map = L.map("map").setView([32.87, -117.25], 10);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "&copy; OpenStreetMap",
+    }).addTo(map);
+    let marker = null;
+
+    function row(label, value) {
+      return `<div class="row"><span>${label}</span><span class="val">${value ?? "—"}</span></div>`;
+    }
+
+    function render(d) {
+      const status = document.getElementById("status");
+      const received = d.received || d.updated || "—";
+      status.textContent = `Last update: ${received}`;
+      if (typeof d.age_sec === "number" && d.age_sec > 180) status.className = "muted stale";
+
+      document.getElementById("metrics").innerHTML = [
+        row("Device", d.device_id || d.id),
+        row("Fix", d.fix),
+        row("RTK", d.rtk),
+        row("Satellites", d.sats),
+        row("Latitude", d.lat != null ? Number(d.lat).toFixed(6) : null),
+        row("Longitude", d.lon != null ? Number(d.lon).toFixed(6) : null),
+        row("Altitude (m)", d.alt_m),
+        row("Bus voltage (V)", d.bus_v),
+        row("Power (mW)", d.power_mw),
+        row("RSSI", d.rssi),
+        row("NTRIP", d.ntrip === 1 ? "up" : d.ntrip === 0 ? "down" : d.ntrip),
+      ].join("");
+
+      if (d.lat != null && d.lon != null) {
+        const ll = [Number(d.lat), Number(d.lon)];
+        if (!marker) marker = L.marker(ll).addTo(map);
+        else marker.setLatLng(ll);
+        map.setView(ll, 12);
+      }
+    }
+
+    function dataUrl() {
+      const repo = window.BUOY_REPO || "";
+      const branch = window.BUOY_BRANCH || "main";
+      if (repo.includes("YOUR_GITHUB")) {
+        return "data.json";
+      }
+      return `https://raw.githubusercontent.com/${repo}/${branch}/docs/data.json`;
+    }
+
+    async function load() {
+      try {
+        const res = await fetch(dataUrl() + "?t=" + Date.now());
+        render(await res.json());
+      } catch (e) {
+        document.getElementById("status").textContent =
+          "Could not load telemetry (check docs/config.js)";
+      }
+    }
+    load();
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>

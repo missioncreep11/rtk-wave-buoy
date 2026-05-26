@@ -28,8 +28,15 @@
 
 BluetoothSerial SerialBT;
 
-#include "secrets.h" 
+#include "secrets.h"
 #include "buoy_combo.h"
+
+#if !defined(HAS_TELEMETRY_URL)
+const char *telemetryUrl = "";
+#endif
+#if !defined(HAS_HOLOGRAM_DEVICE_KEY)
+const char hologramDeviceKey[] = "";
+#endif
 
 // Pin Definitions
 #define SIMCOM_7000
@@ -62,6 +69,9 @@ long lastReceivedRTCM_ms = 0;
 int maxTimeBeforeHangup_ms = 100000;
 const unsigned long ntripRetryInterval = 30000;
 unsigned long lastNTRIPAttempt = 0;
+unsigned long lastCellularActivity_ms = 0;
+unsigned long lastGprsEnabled_ms = 0;
+uint8_t consecutiveNtripFailures = 0;
 long lastGPSPrint = 0;
 unsigned long lastFixStatusPrint = 0;
 
@@ -172,6 +182,10 @@ void loop() {
   // }
   
   monitor_connection_health();
+
+  if (gprsEnabled) {
+    post_telemetry_f();
+  }
 
   // Power + GPS status every 5 seconds
   if (millis() - lastFixStatusPrint > 5000) {
