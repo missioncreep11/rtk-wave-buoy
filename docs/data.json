@@ -1,6 +1,6 @@
 {
-  "device_id": "test-direct",
-  "received": "2026-05-27 20:04:54 UTC",
+  "device_id": "test-pc",
+  "received": "2026-05-27 20:05:41 UTC",
   "fix": 3,
   "rtk": "FIXED",
   "sats": 14,
