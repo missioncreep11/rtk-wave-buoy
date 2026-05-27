@@ -9,6 +9,8 @@ The Worker accepts POSTs from either of two entry points:
 
 Both paths POST the same JSON body and the same `BUOY_SECRET` header; the Worker doesn't care which side originates the request.
 
+The Worker only accepts POSTs at the `/buoy` path. Requests to the bare URL return `404 Not Found`. This is intentional so that stale or duplicate Hologram Alerts on the same account can be left in place (pointing at the bare URL) without triggering GitHub workflow runs.
+
 ## 1. Create the Worker
 
 1. Log into the [Cloudflare Dashboard](https://dash.cloudflare.com/).
@@ -38,7 +40,7 @@ Pick one — both result in the Worker getting POSTs that update `docs/data.json
 
 **Path A — Hologram Alert (works on B03 modem firmware)**
 
-Configure a Hologram Alert with destination URL = the Worker URL, header `BUOY_SECRET` = the value you stored above, and body template `<<decdata>>`. Full recipe in [`../documentation/github-pages.md`](../documentation/github-pages.md). The buoy then needs `hologramDeviceKey` set in `secrets.h` and `telemetryUrl` empty.
+Configure a Hologram Alert with destination URL = the Worker URL **plus `/buoy`** (e.g. `https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev/buoy`), header `BUOY_SECRET` = the value you stored above, and body template `<<decdata>>`. Full recipe in [`../documentation/github-pages.md`](../documentation/github-pages.md). The buoy then needs `hologramDeviceKey` set in `secrets.h` and `telemetryUrl` empty.
 
 **Path B — Direct HTTPS from the buoy (needs B05+ modem firmware)**
 
@@ -46,7 +48,7 @@ In `esp32/buoy_combo/secrets.h`:
 
 ```cpp
 #define HAS_TELEMETRY_URL 1
-const char *telemetryUrl = "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev";
+const char *telemetryUrl = "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev/buoy";
 #define HAS_TELEMETRY_SECRET 1
 const char *telemetrySecret = "YOUR_BUOY_SECRET";
 ```
@@ -67,7 +69,7 @@ $body = @{
     lon = -117.2573
 } | ConvertTo-Json
 
-Invoke-RestMethod -Uri "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev" `
+Invoke-RestMethod -Uri "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev/buoy" `
     -Method Post `
     -Headers @{ "BUOY_SECRET" = 'YOUR_BUOY_SECRET' } `
     -Body $body `
@@ -75,5 +77,7 @@ Invoke-RestMethod -Uri "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev" `
 ```
 
 Use **single quotes** around the secret if it contains `$` (PowerShell would otherwise try to interpolate). Success returns `Successfully forwarded to GitHub Actions`; check the GitHub repo's **Actions** tab to see the workflow run.
+
+A quick sanity check that the path filter works: POST to the same URL without `/buoy` should return `404 Not Found`.
 
 For an end-to-end test that goes through Hologram too, see [`../local_portal/test-hologram.ps1`](../local_portal/test-hologram.ps1).

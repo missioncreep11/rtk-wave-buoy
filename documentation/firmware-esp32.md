@@ -36,7 +36,7 @@ Primary sketch: [`esp32/buoy_combo/`](../esp32/buoy_combo/).
 
 - **GitHub Pages via Hologram relay** (recommended, works on B03): set `hologramDeviceKey`, leave `telemetryUrl` empty — see [github-pages.md](github-pages.md)
 - **Local dashboard**: set `telemetryUrl` to `tcp://<ngrok-host>:<port>/api/ingest`, leave `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
-- **GitHub Pages via direct HTTPS** (needs B05+ modem): set `telemetryUrl` to `https://<worker>.workers.dev` and `telemetrySecret` to match `BUOY_SECRET` on Cloudflare
+- **GitHub Pages via direct HTTPS** (needs B05+ modem): set `telemetryUrl` to `https://<worker>.workers.dev/buoy` and `telemetrySecret` to match `BUOY_SECRET` on Cloudflare (the Worker rejects POSTs to any other path with 404)
 
 `post_telemetry_f()` checks both: if `hologramDeviceKey` is set and `telemetryUrl` is empty, it takes the Hologram branch (`sendHologramCloudMessage`); otherwise it dispatches through `httpPostJson()`.
 

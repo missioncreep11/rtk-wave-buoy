@@ -96,7 +96,7 @@ Conclusion: B03 has no working HTTPS post-NTRIP. `AT+SH*`, `AT+CAOPEN`, and CNAC
 After a modem upgrade the buoy could POST straight to the Cloudflare Worker, skipping Hologram:
 
 1. Flash B05+ firmware on the SIM7000A (see [firmware-esp32.md](firmware-esp32.md)).
-2. In `secrets.h`: uncomment `telemetryUrl = "https://rtk-buoy-proxy.haberkiran.workers.dev"` and set `telemetrySecret` to the Cloudflare `BUOY_SECRET` value.
+2. In `secrets.h`: uncomment `telemetryUrl = "https://rtk-buoy-proxy.haberkiran.workers.dev/buoy"` and set `telemetrySecret` to the Cloudflare `BUOY_SECRET` value. The `/buoy` path is required — the Worker drops POSTs to other paths with 404.
 3. Confirm `[TELEM] POST OK` and check Pages updates.
 
 The Worker accepts both entry points — header check and downstream chain are identical, so the Hologram alert can stay configured as a fallback.

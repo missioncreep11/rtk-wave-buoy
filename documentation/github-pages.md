@@ -66,7 +66,7 @@ In the Hologram dashboard, create an **Alert** with these exact settings:
 | Trigger / Subscribed topic | `_SOCKETAPI_` (matches every Cloud Socket inbound message) |
 | Scope | The SIM group or device that contains your buoy |
 | Notification method | **Webhook** |
-| Destination URL | `https://YOUR-WORKER.workers.dev` |
+| Destination URL | `https://YOUR-WORKER.workers.dev/buoy` (the `/buoy` path is required by the Worker — see below) |
 | Message payload for POST | `<<decdata>>` (sends just the decoded device JSON, no Hologram envelope) |
 | Header — Key | `BUOY_SECRET` |
 | Header — Value | Same value as the Cloudflare `BUOY_SECRET` env var |
@@ -74,6 +74,7 @@ In the Hologram dashboard, create an **Alert** with these exact settings:
 
 Notes:
 
+- The Worker only accepts POSTs at the `/buoy` path. POSTs to the bare worker URL get `404 Not Found`. This is intentional — it lets stale/duplicate Hologram alerts coexist on the account without triggering GitHub workflow runs (point unwanted alerts at the bare URL or just leave them).
 - `_SOCKETAPI_` is technically marked legacy in Hologram's docs but is still emitted on every Cloud Socket inbound today. Alternative tags on the same event are `_DEVICE_<id>_` (per-device) and `_JSONSTRING_` (any JSON Cloud Socket payload).
 - `<<decdata>>` is Hologram's template variable for the decoded `data` field. Without it, the Worker receives the full Hologram envelope as a string and the workflow can't parse it cleanly.
 - The header **name** must be exactly `BUOY_SECRET` — the Worker checks `request.headers.get("BUOY_SECRET")`. Don't confuse this with the Cloudflare env var of the same name (the env var is the *value* the header must match).
@@ -130,8 +131,10 @@ Flash `buoy_combo` and watch serial:
 |---------|-----|
 | Hologram Activity shows the message but no event in Events tab | Wait a few seconds and refresh; events are emitted but indexed asynchronously |
 | Event exists but `matched_rules: []` | Alert subscription doesn't match `_SOCKETAPI_` (or your device's `_DEVICE_<id>_`). Open the alert config and check the topic |
+| Alert log shows HTTP 404 from Worker | Destination URL is missing the `/buoy` path. The Worker rejects POSTs to the bare URL. Update the alert URL to end in `/buoy` |
 | Alert log shows HTTP 401 from Worker | Header `BUOY_SECRET` value doesn't match the Cloudflare env var. Verify both. Header *name* must be exactly `BUOY_SECRET` |
 | Alert log shows HTTP 400 from Worker | Body template isn't `<<decdata>>`, so the Worker can't parse JSON. Update body template, save alert |
+| Multiple workflow runs per Hologram event | More than one Hologram Alert is pointed at `/buoy`. Either delete the duplicates, or point them at the bare worker URL so the Worker drops them with 404 |
 | Webhook returns 200 but no workflow run | `GITHUB_PAT` missing `repo` scope, or `GITHUB_OWNER`/`GITHUB_REPO` wrong on Worker |
 | Workflow ran but `data.json` didn't change | Open the run logs; payload may have lacked recognized fields. Confirm the buoy JSON includes `id` (or `device_id`), `fix`, `rtk`, `lat`, `lon` |
 | Raw JSON looks stale in browser | Hard-refresh; URL-encode `+` in branch name (`Base%2BPowerLog`); confirm `docs/config.js` branch matches |
@@ -143,14 +146,14 @@ Flash `buoy_combo` and watch serial:
 
 ```powershell
 $body = '{"id":"test-direct","fix":3,"rtk":"FIXED","sats":14,"lat":32.8651,"lon":-117.2573}'
-Invoke-RestMethod -Uri "https://YOUR-WORKER.workers.dev" `
+Invoke-RestMethod -Uri "https://YOUR-WORKER.workers.dev/buoy" `
     -Method Post `
     -Headers @{ "BUOY_SECRET" = 'YOUR_SECRET' } `
     -Body $body `
     -ContentType "application/json"
 ```
 
-Expect `Successfully forwarded to GitHub Actions`.
+Expect `Successfully forwarded to GitHub Actions`. (Hitting the bare URL without `/buoy` returns `404 Not Found` — that's by design.)
 
 **GitHub workflow only (skip Worker too):** Repo Actions → **Hologram telemetry → data.json** → **Run workflow** → use the default test payload.
 

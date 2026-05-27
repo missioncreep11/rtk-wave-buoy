@@ -1,5 +1,15 @@
 export default {
   async fetch(request, env, ctx) {
+    // Restrict to a specific path so that older / stray Hologram alerts that
+    // still POST to the bare worker URL get a 404 here instead of triggering
+    // a GitHub workflow run. Only the actively-maintained alert should be
+    // configured to send to `<worker URL>/buoy`.
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/+$/, "");  // tolerate trailing slash
+    if (path !== "/buoy") {
+      return new Response("Not Found", { status: 404 });
+    }
+
     // Only accept POST requests
     if (request.method !== "POST") {
       return new Response("Method not allowed", { status: 405 });
