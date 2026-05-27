@@ -1,6 +1,6 @@
 {
-  "device_id": "test-manual",
-  "received": "2026-05-26 22:40:06 UTC",
+  "device_id": "test-direct",
+  "received": "2026-05-27 20:02:01 UTC",
   "fix": 3,
   "rtk": "FIXED",
   "sats": 14,
