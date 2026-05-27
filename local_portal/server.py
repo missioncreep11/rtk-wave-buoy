@@ -21,7 +21,7 @@ Paste that host:port into secrets.h:
   const char *telemetryUrl = "tcp://0.tcp.ngrok.io:14723/api/ingest";
 
 Optionally export BUOY_SECRET before starting the server to require the
-buoy to send a matching X-Buoy-Secret header (set the same string in
+buoy to send a matching BUOY_SECRET header (set the same string in
 secrets.h `telemetrySecret`).
 """
 
@@ -116,7 +116,7 @@ def index():
 @app.route("/api/ingest", methods=["POST"])
 def ingest():
     if BUOY_SECRET:
-        if request.headers.get("X-Buoy-Secret", "") != BUOY_SECRET:
+        if request.headers.get("BUOY_SECRET", "") != BUOY_SECRET:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     print(f"Ingest:     http://127.0.0.1:{port}/api/ingest")
     print(f"Buoy (LTE): ./start-ngrok.ps1 tcp {port}")
     if BUOY_SECRET:
-        print(f"Auth:       X-Buoy-Secret required ({len(BUOY_SECRET)} chars)")
+        print(f"Auth:       BUOY_SECRET header required ({len(BUOY_SECRET)} chars)")
     else:
-        print("Auth:       open (set BUOY_SECRET env var to require X-Buoy-Secret)")
+        print("Auth:       open (set BUOY_SECRET env var to require BUOY_SECRET header)")
     app.run(host="0.0.0.0", port=port, debug=True)

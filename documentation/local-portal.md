@@ -32,7 +32,7 @@ $env:BUOY_SECRET = "YE6nwNY$c6jKpL!0nx0c5TtH"
 python server.py
 ```
 
-The server then requires `X-Buoy-Secret: <BUOY_SECRET>` on every POST.
+The server then requires `BUOY_SECRET: <value>` header on every POST.
 
 Endpoints:
 
@@ -90,22 +90,20 @@ Flash `buoy_combo`. Serial every ~60 s (with GPRS):
 The firmware closes the NTRIP socket briefly for each POST, then the main
 loop reconnects NTRIP. Expect a 2–5 s gap in `[RTCM]` bytes around telemetry.
 
-## 5. What about HTTPS / Hologram cloud / GitHub Pages?
+## 5. Alternatives
 
-| Path | Status | Why |
-|------|--------|-----|
-| `https://...` direct from buoy | **Broken** | SIM7000A B03 firmware. Re-enable after a B05+ swap. |
-| Hologram Cloud Socket (CSR device key) | **Blocked** | Post-Routes account; no CSR device key issued. |
-| Hologram Outbound Webhook → Cloudflare → GitHub Pages | **Possible** | See [github-pages.md](github-pages.md) Flow B — uses Hologram's server-side outbound webhook to forward TCP telemetry to a Cloudflare Worker, bypassing the modem HTTPS issue entirely. |
-| Cloudflare Worker → GitHub Pages (direct HTTPS from buoy) | **On hold** | Needs B05+ firmware for working HTTPS from the modem. Worker config kept in `secrets.h` comments. |
-| **ngrok TCP → local Flask** | **Working** | This document. |
+| Path | Status | When to use |
+|------|--------|-------------|
+| **ngrok TCP → local Flask** | Working | This document — fastest path for development on your PC |
+| Hologram Cloud Socket → Cloudflare Worker → GitHub Pages | Working | Public dashboard without ngrok / a running PC. See [github-pages.md](github-pages.md) |
+| Direct HTTPS from buoy → Cloudflare Worker | Broken on B03 | Possible only after a SIM7000A B05+ firmware upgrade |
 
 ## Testing checklist
 
 | Step | Check |
 |------|-------|
-| A | `test_ingest.ps1` updates local dashboard |
+| A | `test_ingest.ps1` (or `test-hologram.ps1` for the GitHub Pages path) updates the expected dashboard |
 | B | ngrok host:port in `secrets.h`, `[TELEM] POST OK` on serial |
 | C | Browser map updates after buoy POST |
 
-Public dashboard without a PC: [github-pages.md](github-pages.md) — see Flow B (Hologram Outbound Webhook) for a path that works on B03 firmware today, or Flow A (direct HTTPS) after a B05+ upgrade.
+Public dashboard without a PC: [github-pages.md](github-pages.md). For a quick end-to-end smoke test of that chain without flashing the buoy, run `.\test-hologram.ps1` (see its header for usage).

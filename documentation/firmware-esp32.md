@@ -27,16 +27,18 @@ Primary sketch: [`esp32/buoy_combo/`](../esp32/buoy_combo/).
 |---------|---------|
 | `casterHost`, `casterPort`, `mountPoint` | NTRIP caster |
 | `casterUser`, `casterUserPW` | NTRIP credentials |
-| `telemetryUrl` | Ingest URL — `tcp://host:port/path` for ngrok local portal, `https://...` for Cloudflare Worker |
-| `telemetrySecret` | Shared secret for `X-Buoy-Secret` header; required for Cloudflare Worker, optional for ngrok |
-| `hologramDeviceKey` | 8-char Hologram CSR/router key (cloud dashboard only) |
+| `hologramDeviceKey` | 8-char Hologram Cloud Socket key (Router Credentials in Hologram dashboard) — used for the Hologram relay path |
+| `telemetryUrl` | Direct ingest URL — `tcp://host:port/path` for ngrok local portal, `https://...` for direct Cloudflare Worker (B05+ modem only) |
+| `telemetrySecret` | Shared secret used as `BUOY_SECRET` header on direct HTTP(S) POSTs (the `telemetryUrl` path only). Not used on the Hologram relay path |
 | `TELEMETRY_INTERVAL_MS` | POST interval (default 60000 ms) |
 
 **Pick one telemetry path:**
 
-- Local dashboard: set `telemetryUrl` to `tcp://<ngrok-host>:<port>/api/ingest`, leave `telemetrySecret` and `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
-- GitHub Pages: set `telemetryUrl` to `https://<worker>.workers.dev` and `telemetrySecret` — see [github-pages.md](github-pages.md)
-- Hologram dashboard only: set `hologramDeviceKey`, clear `telemetryUrl` (blocked on newer accounts without CSR key)
+- **GitHub Pages via Hologram relay** (recommended, works on B03): set `hologramDeviceKey`, leave `telemetryUrl` empty — see [github-pages.md](github-pages.md)
+- **Local dashboard**: set `telemetryUrl` to `tcp://<ngrok-host>:<port>/api/ingest`, leave `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
+- **GitHub Pages via direct HTTPS** (needs B05+ modem): set `telemetryUrl` to `https://<worker>.workers.dev` and `telemetrySecret` to match `BUOY_SECRET` on Cloudflare
+
+`post_telemetry_f()` checks both: if `hologramDeviceKey` is set and `telemetryUrl` is empty, it takes the Hologram branch (`sendHologramCloudMessage`); otherwise it dispatches through `httpPostJson()`.
 
 ## Key implementation details
 
@@ -46,12 +48,12 @@ Wraps SIM7000 for:
 
 - `configureNetwork()` — LTE CAT-M, band, CGATT, operator search
 - `tcpConnectPlain` / `tcpSendPlain` — NTRIP without SSL (plain TCP `AT+CIPSTART`/`AT+CIPSEND`)
-- `httpPostJson(url, body)` — dispatches by URL scheme:
+- `sendHologramCloudMessage` — Hologram Cloud Socket relay (TCP to `cloudsocket.hologram.io:9999`); used when `hologramDeviceKey` is set and `telemetryUrl` is empty. Sends `{"k":"<key>","d":"<json>"}\n\n`; expects `[0,0]` back.
+- `httpPostJson(url, body)` — direct POST path; dispatches by URL scheme:
   - `tcp://...` → `tcpHttpPost()` — raw HTTP/1.1 over `AT+CIPSTART` TCP socket (used for ngrok local portal)
-  - `https://...` → `sapbrHttpsPost()` — HTTPS via legacy SAPBR bearer + `AT+HTTPSSL=1` (used for Cloudflare Worker)
+  - `https://...` → `sapbrHttpsPost()` — HTTPS via legacy SAPBR bearer + `AT+HTTPSSL=1` (B05+ modem only)
   - `http://...` → Botletics `postData()` — unencrypted HTTP
-  Sends `X-Buoy-Secret` header when `telemetrySecret` is set
-- `sendHologramCloudMessage` — Hologram cloud socket (TCP to `cloudsocket.hologram.io:9999`)
+  Sends `BUOY_SECRET` header when `telemetrySecret` is set
 
 ### NTRIP
 
@@ -90,14 +92,17 @@ USB serial: **115200**. Modem UART runs at **9600** after init.
 
 Allow 1–3 minutes for first LTE registration outdoors or near a window.
 
-Success pattern:
+Success pattern (Hologram relay path):
 
 ```
 [NET] connected
 [GPRS] enabled
 [NTRIP] connected
 [GPS] fix=3 rtk=FIXED sats=...
-[TELEM] POST OK
+[TELEM] Hologram cloud...
+[TELEM] Hologram OK
 ```
 
-Brief NTRIP reconnect after telemetry POST is normal.
+For the local-portal path the last two lines instead read `[TELEM] HTTP POST...` / `[TELEM] POST OK`.
+
+Brief NTRIP reconnect after each telemetry send is normal.

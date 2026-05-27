@@ -47,8 +47,26 @@ Use u-center for detailed receiver state. ZED LED: off = RTK fixed.
 
 ## Telemetry
 
-Active path on this hardware: **ngrok TCP → local Flask** (see [local-portal.md](local-portal.md)).
-HTTPS and Hologram cloud paths are blocked — see "Why not HTTPS?" below.
+Two supported paths on this hardware:
+
+- **Hologram relay → Cloudflare Worker → GitHub Pages** — public dashboard, no PC needed. See [github-pages.md](github-pages.md).
+- **ngrok TCP → local Flask** — development, full payload visible on your PC. See [local-portal.md](local-portal.md).
+
+### Hologram relay path (`[TELEM] Hologram ...`)
+
+| Symptom | Things to try |
+|---------|----------------|
+| `[TELEM] Hologram failed` | Cloud Socket didn't return `[0,0]`. Most often the modem dropped the socket — usually auto-recovers next cycle. Confirm `hologramDeviceKey` in `secrets.h` matches the Hologram dashboard's Router Credentials for the device |
+| `[TELEM] TCP connect failed` (Hologram branch) | LTE registration lost or PDP context broken; let firmware auto-recover or check `[GPRS]` / `[NET]` lines |
+| Hologram Activity tab shows the message, no event in Events tab | Refresh after a few seconds — events are indexed asynchronously |
+| Event exists but `matched_rules: []` | The Alert isn't subscribed to a matching tag. Use `_SOCKETAPI_` or your device's `_DEVICE_<id>_` |
+| Alert log shows HTTP 401 from Worker | `BUOY_SECRET` header value on the Alert doesn't match the Cloudflare env var. Header *name* must be exactly `BUOY_SECRET` (this is a header check, distinct from the env var of the same name) |
+| Alert log shows HTTP 400 from Worker | Body template missing or wrong; should be `<<decdata>>` so the Worker receives just the buoy JSON |
+| Webhook returns 200, no workflow run | GitHub PAT missing `repo` scope, or `GITHUB_OWNER`/`GITHUB_REPO` env vars wrong on the Worker |
+| Workflow ran, `data.json` unchanged | Run logs show what fields the workflow received; confirm payload includes `id`/`device_id`, `fix`, `rtk`, `lat`, `lon` |
+| Raw JSON stale in browser | Hard-refresh; URL-encode `+` in branch name (`Base%2BPowerLog`); match `docs/config.js` branch |
+
+### ngrok local portal path (`[TELEM] HTTP POST...`)
 
 | Symptom | Things to try |
 |---------|----------------|
@@ -58,11 +76,10 @@ HTTPS and Hologram cloud paths are blocked — see "Why not HTTPS?" below.
 | Server logs 401 | `BUOY_SECRET` env var on PC must match `telemetrySecret` in `secrets.h` exactly |
 | GET on ingest returns 405 | Normal — buoy must **POST** JSON |
 | No local map update | Run `test_ingest.ps1` first; check `local_portal/buoy.db` updates |
-| Raw JSON stale in browser | Hard-refresh; URL-encode `+` in branch name (`Base%2BPowerLog`); match `docs/config.js` branch |
 
-### Why not HTTPS? (B03 firmware findings)
+### Why not direct HTTPS? (B03 firmware findings)
 
-Diagnosis trail on the SIM7000A reporting `Revision:1351B03SIM7000A`:
+Direct HTTPS from the modem to the Cloudflare Worker would eliminate the Hologram hop, but doesn't work on this SIM7000A reporting `Revision:1351B03SIM7000A`:
 
 | Stack attempted | Result |
 |-----------------|--------|
@@ -70,31 +87,19 @@ Diagnosis trail on the SIM7000A reporting `Revision:1351B03SIM7000A`:
 | `AT+HTTP*` + `AT+HTTPSSL=1` (CNACT bearer) | `+HTTPACTION: 1,603,0` (DNS / TLS handshake fail) |
 | `AT+CAOPEN` raw SSL socket | `+CME ERROR: operation not allowed` |
 | `AT+SAPBR` + `AT+HTTPSSL=1` (legacy bearer) | `+HTTPACTION: 1,603,0` even with explicit DNS |
-| **`AT+CIPSTART` plain TCP** | **Works** (same path as NTRIP) |
+| **`AT+CIPSTART` plain TCP** | **Works** (same path as NTRIP and Hologram Cloud Socket) |
 
-Conclusion: B03 has no working HTTPS post-NTRIP. AT+SH*, AT+CAOPEN, and CNACT-bound HTTPS were added in B05+. Until the modem is upgraded or swapped, all telemetry goes over plain TCP via ngrok.
+Conclusion: B03 has no working HTTPS post-NTRIP. `AT+SH*`, `AT+CAOPEN`, and CNACT-bound HTTPS were added in B05+. The Hologram relay path side-steps this entirely by doing the TLS hop in Hologram's cloud.
 
-### Hologram Cloud Socket — also blocked
+### Re-enabling direct HTTPS later (B05+ upgrade)
 
-Newer Hologram accounts (post-Routes) do not issue a Cloud Services Router device key:
+After a modem upgrade the buoy could POST straight to the Cloudflare Worker, skipping Hologram:
 
-- Dashboard → device → no "Configuration" tab
-- `POST /api/1/devices/<id>/csr` → 404
-- `GET /api/1/devices/<id>/csr` → 404
-- `POST /api/1/csr/rdm?deviceid=<id>` → 400
-- `GET /api/1/links/cellular/<id>` → record has no key field
-- Spacebridge: `tunnelable: 0` on the SIM record
-
-Keep `hologramDeviceKey = ""` until/unless Hologram exposes CSR creation again.
-
-### Re-enabling Cloudflare → GitHub Pages later
-
-The Worker (`rtk-buoy-proxy`) and the GitHub Actions workflow still exist. To
-revive that path after a modem upgrade:
-
-1. Flash B05+ firmware on the SIM7000A (`firmware-esp32.md`).
-2. Set `telemetryUrl = "https://rtk-buoy-proxy.haberkiran.workers.dev"` (line preserved in `secrets.h` comments).
+1. Flash B05+ firmware on the SIM7000A (see [firmware-esp32.md](firmware-esp32.md)).
+2. In `secrets.h`: uncomment `telemetryUrl = "https://rtk-buoy-proxy.haberkiran.workers.dev"` and set `telemetrySecret` to the Cloudflare `BUOY_SECRET` value.
 3. Confirm `[TELEM] POST OK` and check Pages updates.
+
+The Worker accepts both entry points — header check and downstream chain are identical, so the Hologram alert can stay configured as a fallback.
 
 ## OpenLog / SD
 

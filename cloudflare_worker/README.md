@@ -1,6 +1,13 @@
 # Cloudflare Worker Telemetry Proxy
 
-This directory contains the code to securely proxy telemetry data from the RTK Wave Buoy to GitHub Actions. This approach replaces the deprecated Hologram Route feature, allowing you to trigger the GitHub Pages dashboard update without exposing your GitHub Personal Access Token (PAT).
+This directory contains the code to securely proxy telemetry data from the RTK Wave Buoy to GitHub Actions without exposing your GitHub Personal Access Token (PAT).
+
+The Worker accepts POSTs from either of two entry points:
+
+- **Hologram Alert webhook** (deployed path) — buoy sends a Cloud Socket message; Hologram's Alert system forwards it here. See [`../documentation/github-pages.md`](../documentation/github-pages.md).
+- **Direct HTTPS from the buoy** — only possible on a SIM7000A B05+ modem; B03 cannot do HTTPS reliably with NTRIP active.
+
+Both paths POST the same JSON body and the same `BUOY_SECRET` header; the Worker doesn't care which side originates the request.
 
 ## 1. Create the Worker
 
@@ -25,23 +32,31 @@ Your worker needs to know where to send the data, and it needs authorization to 
    - `BUOY_SECRET`: A secure, random string (e.g., a long password) that you will also configure on the buoy. This prevents unauthorized people from triggering your workflow.
 4. Click **Deploy** or **Save** to apply the variables.
 
-## 3. Configure the Buoy Firmware
+## 3. Hook the Worker up to a data source
 
-Update your buoy's firmware to send data to the new Cloudflare Worker URL, and configure the secret header.
+Pick one — both result in the Worker getting POSTs that update `docs/data.json`:
 
-1. Note the public URL of your Cloudflare Worker (e.g., `https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev`).
-2. In `esp32/buoy_combo/secrets.h`, set the URL:
-   ```cpp
-   #define HAS_TELEMETRY_URL 1
-   const char *telemetryUrl = "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev";
-   ```
-3. Set `telemetrySecret` in `secrets.h` to the same value as `BUOY_SECRET`. Firmware sends it as the `X-Buoy-Secret` header automatically.
+**Path A — Hologram Alert (works on B03 modem firmware)**
+
+Configure a Hologram Alert with destination URL = the Worker URL, header `BUOY_SECRET` = the value you stored above, and body template `<<decdata>>`. Full recipe in [`../documentation/github-pages.md`](../documentation/github-pages.md). The buoy then needs `hologramDeviceKey` set in `secrets.h` and `telemetryUrl` empty.
+
+**Path B — Direct HTTPS from the buoy (needs B05+ modem firmware)**
+
+In `esp32/buoy_combo/secrets.h`:
+
+```cpp
+#define HAS_TELEMETRY_URL 1
+const char *telemetryUrl = "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev";
+#define HAS_TELEMETRY_SECRET 1
+const char *telemetrySecret = "YOUR_BUOY_SECRET";
+```
+
+The firmware sends `telemetrySecret` as the `BUOY_SECRET` header automatically.
 
 ## 4. Test the Worker
 
-You can test the worker using PowerShell or cURL before deploying the buoy.
+Test the worker using PowerShell before involving Hologram or the buoy:
 
-**PowerShell:**
 ```powershell
 $body = @{
     id = "test"
@@ -54,9 +69,11 @@ $body = @{
 
 Invoke-RestMethod -Uri "https://rtk-buoy-proxy.YOUR_USERNAME.workers.dev" `
     -Method Post `
-    -Headers @{ "X-Buoy-Secret" = "YOUR_BUOY_SECRET" } `
+    -Headers @{ "BUOY_SECRET" = 'YOUR_BUOY_SECRET' } `
     -Body $body `
     -ContentType "application/json"
 ```
 
-If successful, it will return `Successfully forwarded to GitHub Actions`, and you can check the **Actions** tab on your GitHub repository to see the workflow running.
+Use **single quotes** around the secret if it contains `$` (PowerShell would otherwise try to interpolate). Success returns `Successfully forwarded to GitHub Actions`; check the GitHub repo's **Actions** tab to see the workflow run.
+
+For an end-to-end test that goes through Hologram too, see [`../local_portal/test-hologram.ps1`](../local_portal/test-hologram.ps1).

@@ -41,37 +41,27 @@ buoy_combo --plain TCP--> ngrok --> local_portal/server.py --> browser
 
 Configure `telemetryUrl` with a `tcp://` scheme in `secrets.h` (see [local-portal.md](local-portal.md)). The firmware parses the URL and opens a raw `AT+CIPSTART` TCP socket, sending a hand-built `HTTP/1.1 POST` over it (`BuoyModem::tcpHttpPost`). This is the **only** telemetry path proven reliable on SIM7000A firmware B03 — the HTTPS AT stacks (`AT+SH*`, `AT+HTTP*+SSL`, `AT+CAOPEN`) all fail once an NTRIP socket is open. NTRIP is paused briefly during each POST then reconnects.
 
-### Telemetry — optional (Hologram cloud only)
+### Telemetry — public GitHub Pages (deployed path)
 
 ```
-buoy_combo --TCP--> cloudsocket.hologram.io:9999 --> Hologram dashboard
+buoy_combo --plain TCP--> cloudsocket.hologram.io:9999
+      --Hologram Alert webhook--> Cloudflare Worker
+      --GitHub repository_dispatch--> workflow commits docs/data.json --> Pages
 ```
 
-Set `hologramDeviceKey` and leave `telemetryUrl` empty. NTRIP pauses during each cloud message. View payloads under SIM **Activity** in the Hologram dashboard.
+The buoy sends a small `{"k":"<deviceKey>","d":"<json>"}` message over a plain `AT+CIPSTART` TCP socket to Hologram (`BuoyModem::sendHologramCloudMessage`). Hologram emits an event tagged `_SOCKETAPI_`; a Hologram **Alert** subscribed to that tag fans out via webhook to the Cloudflare Worker (`rtk-buoy-proxy`). The Worker validates a `BUOY_SECRET` header and triggers the `Hologram telemetry → data.json` GitHub Actions workflow, which commits a refreshed `docs/data.json`.
 
-**Note:** Newer Hologram accounts (post-Routes) do not issue a CSR device key, so this path may be unavailable — leave `hologramDeviceKey` empty on those accounts.
+This avoids HTTPS from the modem entirely — important because SIM7000A B03 firmware cannot establish HTTPS once an NTRIP TCP socket is open (see [troubleshooting.md](troubleshooting.md)). Set `hologramDeviceKey` in `secrets.h` and leave `telemetryUrl` empty.
 
-### Telemetry — optional (public GitHub Pages)
+Full setup including the Hologram Alert recipe: [github-pages.md](github-pages.md).
 
-Two possible flows, depending on modem firmware:
+### Telemetry — direct HTTPS (future, B05+ modem)
 
-**Flow A — Direct HTTPS (requires SIM7000A B05+ or non-SIM7000 modem)**
 ```
-buoy_combo --HTTPS POST--> Cloudflare Worker --> GitHub repository_dispatch
-      --> workflow updates docs/data.json --> GitHub Pages reads JSON
+buoy_combo --HTTPS POST--> Cloudflare Worker --> GitHub repository_dispatch --> docs/data.json
 ```
 
-The buoy POSTs JSON via `AT+HTTPSSL=1` over the legacy SAPBR bearer (`BuoyModem::sapbrHttpsPost`). The Cloudflare Worker validates the `X-Buoy-Secret` header, then triggers a GitHub Actions workflow that commits `docs/data.json`.
-
-**Flow B — Hologram Outbound Webhook (Recommended for SIM7000A B03 with NTRIP active)**
-```
-buoy_combo --TCP--> Hologram Cloud --> Outbound Webhook --> Cloudflare Worker
-      --> GitHub repository_dispatch --> workflow updates docs/data.json --> Pages
-```
-
-The buoy sends a lightweight TCP message to `cloudsocket.hologram.io:9999`; the Hologram cloud forwards it via a configured Outbound Webhook to the Cloudflare Worker, which triggers the same GitHub workflow. This avoids HTTPS from the modem entirely.
-
-See [github-pages.md](github-pages.md).
+If/when the modem supports HTTPS, the buoy can POST directly to the same Cloudflare Worker via `AT+HTTPSSL=1` over the legacy SAPBR bearer (`BuoyModem::sapbrHttpsPost`), skipping the Hologram relay. Set `telemetryUrl` to the Worker URL and `telemetrySecret` to match `BUOY_SECRET`. The Worker accepts either entry point — the header check and downstream chain are identical.
 
 ## Firmware loop (`buoy_combo`)
 
@@ -84,7 +74,9 @@ Each `loop()` iteration roughly:
    - Polls ZED-F9P PVT over UART (`myGNSS.getPVT()`) for fix type, RTK status, satellites, lat/lon/alt
    - Reads INA228 over I2C (`getBusVoltage_V()`, `getPower_mW()`) for bus power
    - Reads modem RSSI (`modem.getRSSI()`)
-   - Builds JSON payload and sends via `modem.httpPostJson()` — dispatches to `tcpHttpPost()` for `tcp://` URLs or `sapbrHttpsPost()` for `https://` URLs
+   - Builds JSON payload and sends via either:
+     - `modem.sendHologramCloudMessage()` — Hologram relay path (`hologramDeviceKey` set, `telemetryUrl` empty)
+     - `modem.httpPostJson()` — direct path (`telemetryUrl` set); dispatches to `tcpHttpPost()` for `tcp://` URLs or `sapbrHttpsPost()` for `https://` URLs
    - NTRIP socket is briefly closed during POST to avoid AT-command conflicts, then reconnects
 5. Power and GPS status every 5 s (`print_power_status_f`, PVT print over UART and Bluetooth SPP)
 6. Graceful shutdown on button (`gracefulShutdown`)

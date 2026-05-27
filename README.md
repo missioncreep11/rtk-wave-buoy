@@ -30,7 +30,7 @@ Details: [documentation/local-portal.md](documentation/local-portal.md)
 
 ## Optional: public GitHub dashboard
 
-No PC or ngrok required after setup. Buoy POSTs to a Cloudflare Worker; a GitHub workflow updates `docs/data.json`; Pages serves the map.
+No PC or ngrok required after setup. Buoy sends a Cloud Socket message to Hologram, a Hologram Alert forwards it via webhook to a Cloudflare Worker, and a GitHub Actions workflow updates `docs/data.json` for Pages.
 
 **[documentation/github-pages.md](documentation/github-pages.md)**
 

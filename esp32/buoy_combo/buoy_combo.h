@@ -324,7 +324,7 @@ bool BuoyModem::sapbrHttpsPost(const char *host, const char *path, const char *b
 
   if (telemetrySecret && telemetrySecret[0] != '\0') {
     char ud[200];
-    int p = snprintf(ud, sizeof(ud), "AT+HTTPPARA=\"USERDATA\",\"X-Buoy-Secret: ");
+    int p = snprintf(ud, sizeof(ud), "AT+HTTPPARA=\"USERDATA\",\"BUOY_SECRET: ");
     for (size_t i = 0; telemetrySecret[i] && p < (int)sizeof(ud) - 8; i++) {
       const char c = telemetrySecret[i];
       if (c == '"' || c == '\\') {
@@ -600,7 +600,7 @@ bool BuoyModem::tcpHttpPost(const char *host, uint16_t port, const char *path, c
 
   // Compose request header. Host header uses the public ngrok address so any
   // future virtual-hosted server can route correctly; Flask itself ignores it.
-  // X-Buoy-Secret is sent only if configured.
+  // BUOY_SECRET is sent only if configured.
   char req[768];
   int n;
   if (telemetrySecret && telemetrySecret[0]) {
@@ -609,7 +609,7 @@ bool BuoyModem::tcpHttpPost(const char *host, uint16_t port, const char *path, c
                  "Host: %s:%u\r\n"
                  "User-Agent: rtk-wave-buoy/1\r\n"
                  "Content-Type: application/json\r\n"
-                 "X-Buoy-Secret: %s\r\n"
+                 "BUOY_SECRET: %s\r\n"
                  "Connection: close\r\n"
                  "Content-Length: %u\r\n\r\n",
                  path, host, port, telemetrySecret, (unsigned)bodyLen);

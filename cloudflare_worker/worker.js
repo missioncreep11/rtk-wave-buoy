@@ -5,8 +5,11 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
 
-    // Authenticate the request using a shared secret
-    const secret = request.headers.get("X-Buoy-Secret");
+    // Authenticate the request using a shared secret.
+    // Header name and Cloudflare env var name are both "BUOY_SECRET" by
+    // convention here so the Hologram alert config matches the worker config
+    // without a separate X-Buoy-Secret naming.
+    const secret = request.headers.get("BUOY_SECRET");
     if (!env.BUOY_SECRET || secret !== env.BUOY_SECRET) {
       return new Response("Unauthorized", { status: 401 });
     }
