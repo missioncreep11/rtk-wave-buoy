@@ -1019,7 +1019,7 @@ void post_telemetry_f() {
   double lon = 0.0;
   double altM = 0.0;
 
-  if (gpsUARTOnline && myGNSS.getPVT()) {
+  if (gpsUARTOnline && ntripConnected && myGNSS.getPVT()) {
     havePvt = true;
     fixType = myGNSS.getFixType();
     carrSoln = myGNSS.getCarrierSolutionType();
