@@ -47,14 +47,54 @@ Use u-center for detailed receiver state. ZED LED: off = RTK fixed.
 
 ## Telemetry
 
+Active path on this hardware: **ngrok TCP → local Flask** (see [local-portal.md](local-portal.md)).
+HTTPS and Hologram cloud paths are blocked — see "Why not HTTPS?" below.
+
 | Symptom | Things to try |
 |---------|----------------|
-| `[TELEM] POST failed` | Check URL starts with `https://`; ngrok running for local portal; update URL after ngrok restart |
-| Worker returns 401 | `telemetrySecret` must match Cloudflare `BUOY_SECRET` |
+| `[TELEM] TCP connect failed` | Stale ngrok address. Restart ngrok, paste new host:port into `secrets.h`, re-flash |
+| `[TELEM] TCP send failed` | Modem dropped the socket; usually auto-recovers next cycle |
+| `[TELEM] POST failed` (no other line) | Check `telemetryUrl` starts with `tcp://`; ensure `ngrok tcp 8080` is running |
+| Server logs 401 | `BUOY_SECRET` env var on PC must match `telemetrySecret` in `secrets.h` exactly |
 | GET on ingest returns 405 | Normal — buoy must **POST** JSON |
-| No local map | Run `test_ingest.ps1` first; check `local_portal/buoy.db` updates |
-| Cloudflare OK but no GitHub update | Cloudflare `GITHUB_OWNER` / `GITHUB_REPO`; PAT scope; workflow on default branch — see [github-pages.md](github-pages.md) |
+| No local map update | Run `test_ingest.ps1` first; check `local_portal/buoy.db` updates |
 | Raw JSON stale in browser | Hard-refresh; URL-encode `+` in branch name (`Base%2BPowerLog`); match `docs/config.js` branch |
+
+### Why not HTTPS? (B03 firmware findings)
+
+Diagnosis trail on the SIM7000A reporting `Revision:1351B03SIM7000A`:
+
+| Stack attempted | Result |
+|-----------------|--------|
+| `AT+SH*` (Botletics `postData` HTTPS) | `+CME ERROR: operation not allowed` on `SHCONN`, even after `CIPCLOSE`, clock sync, DNS config, double `SHDISC` |
+| `AT+HTTP*` + `AT+HTTPSSL=1` (CNACT bearer) | `+HTTPACTION: 1,603,0` (DNS / TLS handshake fail) |
+| `AT+CAOPEN` raw SSL socket | `+CME ERROR: operation not allowed` |
+| `AT+SAPBR` + `AT+HTTPSSL=1` (legacy bearer) | `+HTTPACTION: 1,603,0` even with explicit DNS |
+| **`AT+CIPSTART` plain TCP** | **Works** (same path as NTRIP) |
+
+Conclusion: B03 has no working HTTPS post-NTRIP. AT+SH*, AT+CAOPEN, and CNACT-bound HTTPS were added in B05+. Until the modem is upgraded or swapped, all telemetry goes over plain TCP via ngrok.
+
+### Hologram Cloud Socket — also blocked
+
+Newer Hologram accounts (post-Routes) do not issue a Cloud Services Router device key:
+
+- Dashboard → device → no "Configuration" tab
+- `POST /api/1/devices/<id>/csr` → 404
+- `GET /api/1/devices/<id>/csr` → 404
+- `POST /api/1/csr/rdm?deviceid=<id>` → 400
+- `GET /api/1/links/cellular/<id>` → record has no key field
+- Spacebridge: `tunnelable: 0` on the SIM record
+
+Keep `hologramDeviceKey = ""` until/unless Hologram exposes CSR creation again.
+
+### Re-enabling Cloudflare → GitHub Pages later
+
+The Worker (`rtk-buoy-proxy`) and the GitHub Actions workflow still exist. To
+revive that path after a modem upgrade:
+
+1. Flash B05+ firmware on the SIM7000A (`firmware-esp32.md`).
+2. Set `telemetryUrl = "https://rtk-buoy-proxy.haberkiran.workers.dev"` (line preserved in `secrets.h` comments).
+3. Confirm `[TELEM] POST OK` and check Pages updates.
 
 ## OpenLog / SD
 
@@ -74,5 +114,5 @@ Use u-center for detailed receiver state. ZED LED: off = RTK fixed.
 ## Software
 
 - Do not commit `secrets.h`
-- ngrok free URLs change on restart — update `telemetryUrl` and re-flash
+- ngrok free TCP addresses (`tcp://N.tcp.ngrok.io:NNNNN`) change on restart — update `telemetryUrl` and re-flash
 - Arduino: Apollo3 **2.2.1** for OLA; ESP32 partition scheme for WiFi/BLE legacy sketches only

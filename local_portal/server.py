@@ -9,8 +9,20 @@ Setup: documentation/local-portal.md
 
 Open http://127.0.0.1:8080/
 
-Buoy (LTE): ngrok http 8080, then set telemetryUrl in secrets.h to:
-  https://YOUR-ID.ngrok-free.app/api/ingest
+Buoy (LTE) — the SIM7000 modem can't do HTTPS on B03 firmware, so we tunnel
+plain TCP through ngrok:
+
+  ./start-ngrok.ps1 tcp 8080
+
+ngrok prints e.g.   Forwarding  tcp://0.tcp.ngrok.io:14723 -> localhost:8080
+
+Paste that host:port into secrets.h:
+
+  const char *telemetryUrl = "tcp://0.tcp.ngrok.io:14723/api/ingest";
+
+Optionally export BUOY_SECRET before starting the server to require the
+buoy to send a matching X-Buoy-Secret header (set the same string in
+secrets.h `telemetrySecret`).
 """
 
 from __future__ import annotations
@@ -26,6 +38,7 @@ from flask import Flask, jsonify, request, send_from_directory
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "buoy.db"
 STATIC = APP_DIR / "static"
+BUOY_SECRET = os.environ.get("BUOY_SECRET", "").strip()
 
 app = Flask(__name__, static_folder=str(STATIC))
 
@@ -102,6 +115,9 @@ def index():
 
 @app.route("/api/ingest", methods=["POST"])
 def ingest():
+    if BUOY_SECRET:
+        if request.headers.get("X-Buoy-Secret", "") != BUOY_SECRET:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "JSON object required"}), 400
@@ -135,6 +151,10 @@ if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", "8080"))
     print(f"Dashboard:  http://127.0.0.1:{port}/")
-    print(f"Ingest:      http://127.0.0.1:{port}/api/ingest")
-    print("Buoy (LTE): ngrok http", port)
+    print(f"Ingest:     http://127.0.0.1:{port}/api/ingest")
+    print(f"Buoy (LTE): ./start-ngrok.ps1 tcp {port}")
+    if BUOY_SECRET:
+        print(f"Auth:       X-Buoy-Secret required ({len(BUOY_SECRET)} chars)")
+    else:
+        print("Auth:       open (set BUOY_SECRET env var to require X-Buoy-Secret)")
     app.run(host="0.0.0.0", port=port, debug=True)
