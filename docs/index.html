@@ -72,7 +72,7 @@
 
     function dataUrl() {
       const repo = window.BUOY_REPO || "";
-      const branch = window.BUOY_BRANCH || "main";
+      const branch = encodeURIComponent(window.BUOY_BRANCH || "main");
       if (repo.includes("YOUR_GITHUB")) {
         return "data.json";
       }
