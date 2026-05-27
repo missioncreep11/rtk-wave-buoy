@@ -1,14 +1,14 @@
 {
-  "device_id": "test-cleanup-script",
-  "received": "2026-05-27 20:16:18 UTC",
+  "device_id": "865235030714188",
+  "received": "2026-05-27 20:45:07 UTC",
   "fix": 3,
   "rtk": "FIXED",
-  "sats": 14,
-  "lat": 32.8651,
-  "lon": -117.2573,
-  "alt_m": null,
-  "bus_v": null,
-  "power_mw": null,
-  "rssi": null,
-  "ntrip": null
+  "sats": 22,
+  "lat": 32.8683342,
+  "lon": -117.2512676,
+  "alt_m": 64.87,
+  "bus_v": 0,
+  "power_mw": 0,
+  "rssi": 20,
+  "ntrip": 1
 }
