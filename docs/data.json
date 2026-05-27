@@ -1,6 +1,6 @@
 {
-  "device_id": "test-pc",
-  "received": "2026-05-27 20:05:41 UTC",
+  "device_id": "test-cleanup-script",
+  "received": "2026-05-27 20:16:18 UTC",
   "fix": 3,
   "rtk": "FIXED",
   "sats": 14,
