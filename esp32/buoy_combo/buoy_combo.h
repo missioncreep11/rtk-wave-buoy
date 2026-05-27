@@ -652,14 +652,51 @@ bool BuoyModem::tcpHttpPost(const char *host, uint16_t port, const char *path, c
 }
 
 bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
-  if (!tcpConnectPlain("cloudsocket.hologram.io", 9999)) return false;
+  Serial.println(F("[HOLO] CIPSTART cloudsocket.hologram.io:9999"));
+  if (!tcpConnectPlain("cloudsocket.hologram.io", 9999)) {
+    Serial.println(F("[HOLO] CIPSTART FAILED"));
+    return false;
+  }
+  Serial.print(F("[HOLO] CIPSEND "));
+  Serial.print(len);
+  Serial.println(F(" bytes"));
   if (!tcpSendPlain(msg, len)) {
+    Serial.println(F("[HOLO] CIPSEND FAILED"));
     sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
     return false;
   }
-  delay(1500);
-  readline(3000);
-  bool ok = (strstr(replybuffer, "[0,0]") != nullptr);
+
+  // The CIP stack is in CIPRXGET=1 ("manual receive") mode globally so NTRIP
+  // can pull RTCM bytes on demand. In that mode incoming TCP bytes are NOT
+  // delivered as +IPD URCs — we see only a "+CIPRXGET: 1" hint, then have to
+  // pull the data ourselves. Botletics' TCPavailable()/TCPread() wrap the
+  // required AT+CIPRXGET=2,<n> sequence; reuse the same path RTCM uses.
+  char respBuf[80];
+  uint16_t respLen = 0;
+  respBuf[0] = '\0';
+  bool ok = false;
+  const uint32_t deadline = millis() + 8000;
+  while ((int32_t)(deadline - millis()) > 0) {
+    uint16_t avail = TCPavailable();
+    if (avail > 0) {
+      uint16_t room = (uint16_t)(sizeof(respBuf) - 1 - respLen);
+      if (room == 0) break;
+      uint16_t want = (avail < room) ? avail : room;
+      uint16_t got = TCPread((uint8_t *)(respBuf + respLen), want);
+      respLen += got;
+      respBuf[respLen] = '\0';
+      if (strstr(respBuf, "[0,0]")) { ok = true; break; }
+    } else {
+      delay(100);
+    }
+  }
+
+  Serial.print(F("[HOLO] response ("));
+  Serial.print(respLen);
+  Serial.print(F(" bytes): '"));
+  Serial.print(respBuf);
+  Serial.println(F("'"));
+
   sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
   return ok;
 }
@@ -1080,11 +1117,20 @@ void post_telemetry_f() {
     return;
   }
 
+  // Match the local-portal branch's CIP cleanup: closing the NTRIP socket
+  // with just a 500 ms delay was not enough — the modem still treated the
+  // CIP stack as busy when sendHologramCloudMessage tried to CIPSTART again,
+  // producing intermittent [TELEM] Hologram failed even when the Hologram
+  // device key is valid.
   bool wasNtrip = ntripConnected;
   if (wasNtrip) {
+    Serial.println(F("[TELEM] closing NTRIP for Hologram send..."));
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
     ntripConnected = false;
-    delay(500);
+    modem.invalidateCipStack();
+    delay(2000);
+    Serial.println(F("[TELEM] ensurePdpActive..."));
+    modem.ensurePdpActive();
   }
 
   Serial.println(F("[TELEM] Hologram cloud..."));

@@ -23,10 +23,15 @@ export default {
         return new Response("Worker is missing GitHub configuration.", { status: 500 });
       }
 
-      // Construct the payload for GitHub repository_dispatch
+      // Construct the payload for GitHub repository_dispatch.
+      // The buoy sends 11 top-level fields (id, fix, rtk, sats, lat, lon,
+      // alt_m, bus_v, power_mw, rssi, ntrip). GitHub's repository_dispatch
+      // endpoint caps client_payload at 10 top-level properties, so we nest
+      // the whole buoy object under a single "data" key. The companion
+      // GitHub workflow (hologram-telemetry.yml) unwraps it.
       const githubPayload = {
         event_type: "buoy-telemetry",
-        client_payload: buoyData
+        client_payload: { data: buoyData }
       };
 
       // Forward to GitHub API

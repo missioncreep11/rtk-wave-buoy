@@ -41,6 +41,11 @@ jobs:
               except json.JSONDecodeError:
                   pass
 
+          # The Cloudflare Worker wraps the buoy JSON under "data" to stay
+          # under GitHub's 10-property cap on client_payload.
+          if isinstance(payload.get("data"), dict):
+              payload = {**payload, **payload["data"]}
+
           out = {
               "device_id": payload.get("id") or payload.get("device_id") or "unknown",
               "received": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
