@@ -95,8 +95,9 @@ loop reconnects NTRIP. Expect a 2–5 s gap in `[RTCM]` bytes around telemetry.
 | Path | Status | Why |
 |------|--------|-----|
 | `https://...` direct from buoy | **Broken** | SIM7000A B03 firmware. Re-enable after a B05+ swap. |
-| Hologram Cloud Socket | **Blocked** | Post-Routes account; no CSR device key issued. |
-| Cloudflare Worker → GitHub Pages | **On hold** | Needs the HTTPS path above. Worker config kept in `secrets.h` comments. |
+| Hologram Cloud Socket (CSR device key) | **Blocked** | Post-Routes account; no CSR device key issued. |
+| Hologram Outbound Webhook → Cloudflare → GitHub Pages | **Possible** | See [github-pages.md](github-pages.md) Flow B — uses Hologram's server-side outbound webhook to forward TCP telemetry to a Cloudflare Worker, bypassing the modem HTTPS issue entirely. |
+| Cloudflare Worker → GitHub Pages (direct HTTPS from buoy) | **On hold** | Needs B05+ firmware for working HTTPS from the modem. Worker config kept in `secrets.h` comments. |
 | **ngrok TCP → local Flask** | **Working** | This document. |
 
 ## Testing checklist
@@ -107,4 +108,4 @@ loop reconnects NTRIP. Expect a 2–5 s gap in `[RTCM]` bytes around telemetry.
 | B | ngrok host:port in `secrets.h`, `[TELEM] POST OK` on serial |
 | C | Browser map updates after buoy POST |
 
-Public dashboard without a PC: [github-pages.md](github-pages.md) (reactivate after B05+).
+Public dashboard without a PC: [github-pages.md](github-pages.md) — see Flow B (Hologram Outbound Webhook) for a path that works on B03 firmware today, or Flow A (direct HTTPS) after a B05+ upgrade.

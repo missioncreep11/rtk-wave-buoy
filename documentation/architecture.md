@@ -27,18 +27,19 @@ The ESP32 opens a plain TCP socket to the caster (`BuoyModem::tcpConnectPlain`),
 ### High-rate logging (SD card)
 
 ```
-ZED-F9P --Qwiic/I2C--> OpenLog Artemis --> microSD (.ubx, IMU CSV)
+ZED-F9P --Qwiic/I2C--> OpenLog Artemis --> microSD (.ubx)
+ICM-20948 --SPI--> OpenLog Artemis --> microSD (imuLogNNNNN.csv)
 ```
 
-RTCM injection uses UART from ESP32 to ZED-F9P; OLA logs PVT and IMU independently.
+RTCM injection uses UART from ESP32 to ZED-F9P; OLA logs PVT (UBX binary) and IMU (CSV) independently. The OLA writes raw `.ubx` frames to `dataLogNNNNN.ubx` and formatted IMU CSV rows to `imuLogNNNNN.csv`. Post-processing on a PC converts `.ubx` to CSV using parsers in `ubx_parsers/`.
 
 ### Telemetry — default (local portal)
 
 ```
-buoy_combo --HTTPS POST--> ngrok --> local_portal/server.py --> browser
+buoy_combo --plain TCP--> ngrok --> local_portal/server.py --> browser
 ```
 
-Configure `telemetryUrl` in `secrets.h` (see [local-portal.md](local-portal.md)). Uses the modem HTTP stack (`AT+SH*`), so NTRIP may pause briefly during each POST then reconnect.
+Configure `telemetryUrl` with a `tcp://` scheme in `secrets.h` (see [local-portal.md](local-portal.md)). The firmware parses the URL and opens a raw `AT+CIPSTART` TCP socket, sending a hand-built `HTTP/1.1 POST` over it (`BuoyModem::tcpHttpPost`). This is the **only** telemetry path proven reliable on SIM7000A firmware B03 — the HTTPS AT stacks (`AT+SH*`, `AT+HTTP*+SSL`, `AT+CAOPEN`) all fail once an NTRIP socket is open. NTRIP is paused briefly during each POST then reconnects.
 
 ### Telemetry — optional (Hologram cloud only)
 
@@ -48,14 +49,29 @@ buoy_combo --TCP--> cloudsocket.hologram.io:9999 --> Hologram dashboard
 
 Set `hologramDeviceKey` and leave `telemetryUrl` empty. NTRIP pauses during each cloud message. View payloads under SIM **Activity** in the Hologram dashboard.
 
+**Note:** Newer Hologram accounts (post-Routes) do not issue a CSR device key, so this path may be unavailable — leave `hologramDeviceKey` empty on those accounts.
+
 ### Telemetry — optional (public GitHub Pages)
 
+Two possible flows, depending on modem firmware:
+
+**Flow A — Direct HTTPS (requires SIM7000A B05+ or non-SIM7000 modem)**
 ```
 buoy_combo --HTTPS POST--> Cloudflare Worker --> GitHub repository_dispatch
       --> workflow updates docs/data.json --> GitHub Pages reads JSON
 ```
 
-The buoy POSTs JSON to a Cloudflare Worker (which holds the GitHub PAT). The worker triggers a GitHub Actions workflow that commits `docs/data.json`. See [github-pages.md](github-pages.md).
+The buoy POSTs JSON via `AT+HTTPSSL=1` over the legacy SAPBR bearer (`BuoyModem::sapbrHttpsPost`). The Cloudflare Worker validates the `X-Buoy-Secret` header, then triggers a GitHub Actions workflow that commits `docs/data.json`.
+
+**Flow B — Hologram Outbound Webhook (Recommended for SIM7000A B03 with NTRIP active)**
+```
+buoy_combo --TCP--> Hologram Cloud --> Outbound Webhook --> Cloudflare Worker
+      --> GitHub repository_dispatch --> workflow updates docs/data.json --> Pages
+```
+
+The buoy sends a lightweight TCP message to `cloudsocket.hologram.io:9999`; the Hologram cloud forwards it via a configured Outbound Webhook to the Cloudflare Worker, which triggers the same GitHub workflow. This avoids HTTPS from the modem entirely.
+
+See [github-pages.md](github-pages.md).
 
 ## Firmware loop (`buoy_combo`)
 
@@ -64,8 +80,13 @@ Each `loop()` iteration roughly:
 1. Network registration and GPRS (`network_status_check_f`, `enable_gprs_f`)
 2. NTRIP connect/retry and RTCM relay (`beginNTRIPClient`, `handleNTRIPData`)
 3. Connection health / hangup (`monitor_connection_health`)
-4. Telemetry on interval (`post_telemetry_f`, default 60 s)
-5. Power and GPS status every 5 s (`print_power_status_f`, PVT print)
+4. Telemetry on interval (`post_telemetry_f`, default 60 s):
+   - Polls ZED-F9P PVT over UART (`myGNSS.getPVT()`) for fix type, RTK status, satellites, lat/lon/alt
+   - Reads INA228 over I2C (`getBusVoltage_V()`, `getPower_mW()`) for bus power
+   - Reads modem RSSI (`modem.getRSSI()`)
+   - Builds JSON payload and sends via `modem.httpPostJson()` — dispatches to `tcpHttpPost()` for `tcp://` URLs or `sapbrHttpsPost()` for `https://` URLs
+   - NTRIP socket is briefly closed during POST to avoid AT-command conflicts, then reconnects
+5. Power and GPS status every 5 s (`print_power_status_f`, PVT print over UART and Bluetooth SPP)
 6. Graceful shutdown on button (`gracefulShutdown`)
 
 ## Repository map (active paths)

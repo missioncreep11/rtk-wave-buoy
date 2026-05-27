@@ -1,9 +1,18 @@
 # GitHub Pages dashboard (optional)
 
-Use this when you want a **public** map without running a PC or ngrok. The buoy cannot POST directly to `github.io`; data flows through a **Cloudflare Worker proxy** and a **GitHub repository_dispatch** workflow.
+Use this when you want a **public** map without running a PC or ngrok. Because the buoy cannot POST directly to `github.io`, data is securely proxied through a **Cloudflare Worker** to trigger a **GitHub repository_dispatch** workflow.
 
+### Data Flow Options
+
+#### Flow A: Direct HTTPS (Best for newer firmware / non-NTRIP deployments)
 ```
 Buoy (HTTP POST) --> Cloudflare Worker --> GitHub API --> workflow --> docs/data.json --> Pages
+```
+
+#### Flow B: Hologram TCP Outbound Webhook (Recommended for SIM7000A B03 with NTRIP active)
+Because the SIM7000A B03 firmware fails to initiate HTTPS requests once the NTRIP corrections TCP socket is open, the buoy sends data via a lightweight, plain TCP socket to Hologram, which then securely forwards the data using an Outbound Webhook.
+```
+Buoy (TCP Socket to cloudsocket.hologram.io:9999) --> Hologram Cloud --> Outbound Webhook --> Cloudflare Worker --> GitHub API --> workflow --> docs/data.json --> Pages
 ```
 
 Static site files live in [`docs/`](../docs/) (do not move — workflows deploy that folder).

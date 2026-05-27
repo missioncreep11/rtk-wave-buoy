@@ -27,16 +27,16 @@ Primary sketch: [`esp32/buoy_combo/`](../esp32/buoy_combo/).
 |---------|---------|
 | `casterHost`, `casterPort`, `mountPoint` | NTRIP caster |
 | `casterUser`, `casterUserPW` | NTRIP credentials |
-| `telemetryUrl` | HTTPS ingest URL (ngrok local portal or Cloudflare Worker) |
-| `telemetrySecret` | Shared secret for Cloudflare Worker (`X-Buoy-Secret` header); leave empty for ngrok |
+| `telemetryUrl` | Ingest URL — `tcp://host:port/path` for ngrok local portal, `https://...` for Cloudflare Worker |
+| `telemetrySecret` | Shared secret for `X-Buoy-Secret` header; required for Cloudflare Worker, optional for ngrok |
 | `hologramDeviceKey` | 8-char Hologram CSR/router key (cloud dashboard only) |
 | `TELEMETRY_INTERVAL_MS` | POST interval (default 60000 ms) |
 
 **Pick one telemetry path:**
 
-- Local dashboard: set `telemetryUrl`, leave `telemetrySecret` and `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
-- GitHub Pages: set `telemetryUrl` (Worker URL) and `telemetrySecret` — see [github-pages.md](github-pages.md)
-- Hologram dashboard only: set `hologramDeviceKey`, clear `telemetryUrl`
+- Local dashboard: set `telemetryUrl` to `tcp://<ngrok-host>:<port>/api/ingest`, leave `telemetrySecret` and `hologramDeviceKey` empty — see [local-portal.md](local-portal.md)
+- GitHub Pages: set `telemetryUrl` to `https://<worker>.workers.dev` and `telemetrySecret` — see [github-pages.md](github-pages.md)
+- Hologram dashboard only: set `hologramDeviceKey`, clear `telemetryUrl` (blocked on newer accounts without CSR key)
 
 ## Key implementation details
 
@@ -45,13 +45,27 @@ Primary sketch: [`esp32/buoy_combo/`](../esp32/buoy_combo/).
 Wraps SIM7000 for:
 
 - `configureNetwork()` — LTE CAT-M, band, CGATT, operator search
-- `tcpConnectPlain` / `tcpSendPlain` — NTRIP without SSL
-- `httpPostJson(url, body)` — HTTPS telemetry via `AT+SH*` (parses host/path; sends `X-Buoy-Secret` when `telemetrySecret` is set)
-- `sendHologramCloudMessage` — Hologram cloud socket
+- `tcpConnectPlain` / `tcpSendPlain` — NTRIP without SSL (plain TCP `AT+CIPSTART`/`AT+CIPSEND`)
+- `httpPostJson(url, body)` — dispatches by URL scheme:
+  - `tcp://...` → `tcpHttpPost()` — raw HTTP/1.1 over `AT+CIPSTART` TCP socket (used for ngrok local portal)
+  - `https://...` → `sapbrHttpsPost()` — HTTPS via legacy SAPBR bearer + `AT+HTTPSSL=1` (used for Cloudflare Worker)
+  - `http://...` → Botletics `postData()` — unencrypted HTTP
+  Sends `X-Buoy-Secret` header when `telemetrySecret` is set
+- `sendHologramCloudMessage` — Hologram cloud socket (TCP to `cloudsocket.hologram.io:9999`)
 
 ### NTRIP
 
 `beginNTRIPClient()` opens TCP, sends NTRIP GET with credentials, validates HTTP 200/ICY, then `handleNTRIPData()` pumps RTCM to GPS.
+
+### Telemetry data sources
+
+The ESP32 polls three hardware sources each telemetry cycle (`post_telemetry_f()`):
+
+| Source | Interface | Fields |
+|--------|-----------|--------|
+| ZED-F9P | UART (`myGNSS.getPVT()`) | `fix`, `rtk`, `sats`, `lat`, `lon`, `alt_m` |
+| INA228 | I2C (Qwiic) | `bus_v`, `power_mw` |
+| SIM7000 modem | AT commands | `id` (IMEI), `rssi`, `ntrip` |
 
 ### Telemetry JSON fields
 
