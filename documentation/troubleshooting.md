@@ -5,6 +5,7 @@
 | Symptom | Things to try |
 |---------|----------------|
 | `[NET] CSQ=99 CGREG=0` | Wait 1–3 min; move outdoors; check SIM active on Hologram |
+| `[NET] CSQ=0 CGREG=0 (not registered)` for minutes | Modem stuck off-network; firmware hard-resets after **5 min** (`registration timeout`); power-cycle if needed before re-flash |
 | `[NET] registration lost` | Modem dropped LTE; waits for CGREG then re-enables GPRS |
 | CPIN not READY | Reseat SIM; power cycle 30 s |
 | Stays on band wrong carrier | Set `LTE_CATM_BAND` to `13` for Verizon in `buoy_combo.h` |
@@ -30,10 +31,11 @@ After a weekend-style outage (CGREG OK, no IP traffic), firmware now:
 2. **Refreshes GPRS** (tear down PDP + CIP, re-enable) if no RTCM/telemetry for **5 min** (`DATA_PATH_STALE_MS`), cooldown **2 min** between refreshes. Does **not** refresh on CNACT `0.0.0.0` while NTRIP/RTCM is still active (CIP and CNACT are separate on SIM7000).
 3. Treats **CGREG=0** as network loss only after **2** consecutive bad polls **and** no RTCM in the last **2 min** — a single `[HEALTH] net=0` while `[RTCM]` is active is ignored.
 4. **Hard-resets the modem** (RST + `configureNetwork`) after **10** consecutive NTRIP failures, cooldown **10 min**.
+5. **Hard-resets the modem** when **unregistered too long** while disconnected: **5 min** at `CSQ=0` / `CGREG=0` (or denied), **10 min** if still searching (`CGREG=2`) with usable signal. Covers the case where LTE drops and `[HEALTH]` stops running because `networkConnected` is false.
 
-Serial lines to watch: `[HEALTH]`, `[DATA] invalidate`, `[GPRS] refresh`, `[MODEM] hard recover`, `[NTRIP] fail streak=N`.
+Serial lines to watch: `[HEALTH]`, `[DATA] invalidate`, `[GPRS] refresh`, `[MODEM] hard recover`, `[MODEM] hard recover: registration timeout`, `[NTRIP] fail streak=N`.
 
-Tune timeouts in `buoy_combo.h` (`DATA_PATH_STALE_MS`, `NTRIP_FAILURES_BEFORE_HARD_RESET`, etc.).
+Tune timeouts in `buoy_combo.h` (`DATA_PATH_STALE_MS`, `NTRIP_FAILURES_BEFORE_HARD_RESET`, `UNREGISTERED_HARD_RECOVER_MS`, etc.).
 
 ## GPS / RTK
 

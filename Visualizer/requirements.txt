@@ -1,0 +1,7 @@
+pandas
+matplotlib
+numpy
+scipy
+contextily
+pyproj
+plotly

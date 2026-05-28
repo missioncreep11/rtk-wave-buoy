@@ -26,10 +26,13 @@ Static site files live in [`docs/`](../docs/) — do not move them; workflows de
 ## 1. Enable GitHub Pages
 
 1. Repo **Settings → Pages**
-2. Source: **Deploy from a branch**, branch: default (e.g. `Base+PowerLog`), folder **`/docs`**
-3. Save. Note the Pages URL (e.g. `https://<user>.github.io/rtk-wave-buoy/`)
+2. Source: **GitHub Actions** (not "Deploy from a branch")
+3. If prompted, pick the **Deploy GitHub Pages** workflow from [`.github/workflows/github-pages.yml`](../.github/workflows/github-pages.yml)
+4. Save. Note the Pages URL (e.g. `https://<user>.github.io/rtk-wave-buoy/`)
 
-The deploy workflow runs when `docs/index.html` or `docs/config.js` change on that branch.
+**Why GitHub Actions, not branch deploy?** If source is "Deploy from a branch", GitHub runs its built-in **`pages build and deployment`** workflow on **every push** — including telemetry commits that only touch `docs/data.json`. That duplicates work and clutters Actions. With source set to **GitHub Actions**, only the custom deploy workflow runs, and it is path-filtered to `docs/index.html`, `docs/config.js`, and the workflow file itself. Telemetry updates to `docs/data.json` no longer trigger a Pages rebuild.
+
+To stop **`pages build and deployment`** if it is already running: change source from "Deploy from a branch" to **GitHub Actions** as above. You cannot delete that built-in workflow from the repo; disabling branch deploy is the fix.
 
 ## 2. Configure the dashboard
 

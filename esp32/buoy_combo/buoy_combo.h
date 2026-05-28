@@ -51,6 +51,12 @@
 #ifndef CELLULAR_LINK_ALIVE_MS
 #define CELLULAR_LINK_ALIVE_MS 120000UL
 #endif
+#ifndef UNREGISTERED_HARD_RECOVER_MS
+#define UNREGISTERED_HARD_RECOVER_MS (5UL * 60UL * 1000UL)
+#endif
+#ifndef UNREGISTERED_SEARCHING_GRACE_MS
+#define UNREGISTERED_SEARCHING_GRACE_MS (10UL * 60UL * 1000UL)
+#endif
 
 // Hologram / US LTE CAT-M: 12 = AT&T/T-Mobile, 13 = Verizon
 #ifndef LTE_CATM_BAND
@@ -986,6 +992,26 @@ void network_status_check_f() {
       SerialBT.println(F("[NET] registration lost"));
       invalidateDataPath(F("CGREG lost"));
       networkConnected = false;
+    }
+  }
+
+  // monitor_connection_health() returns immediately when !networkConnected, so
+  // a modem stuck at CSQ=0 / CGREG=0 would never reach hard-recover otherwise.
+  static unsigned long unregisteredSinceMs = 0;
+  if (cgregRegistered(n)) {
+    unregisteredSinceMs = 0;
+  } else {
+    if (unregisteredSinceMs == 0) {
+      unregisteredSinceMs = millis();
+    } else {
+      const unsigned long limit =
+          (n == 2 && rssi != 0 && rssi != 99)
+              ? UNREGISTERED_SEARCHING_GRACE_MS
+              : UNREGISTERED_HARD_RECOVER_MS;
+      if (millis() - unregisteredSinceMs >= limit) {
+        unregisteredSinceMs = 0;
+        modemHardRecover_f(F("registration timeout"));
+      }
     }
   }
 }
