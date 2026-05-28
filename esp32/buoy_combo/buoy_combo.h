@@ -73,8 +73,6 @@ public:
   bool tcpConnectedPlain();
   bool tcpSendPlain(const char *packet, uint16_t len);
   bool sendHologramCloudMessage(const char *msg, uint16_t len);
-  bool httpPostJson(const char *fullUrl, const char *body);
-  bool tcpHttpPost(const char *host, uint16_t port, const char *path, const char *body);
 
   void printDiagnostics() {
     const uint16_t t = 3000;
@@ -121,17 +119,7 @@ public:
     return strchr(replybuffer, '.') != nullptr && strstr(replybuffer, "0.0.0.0") == nullptr;
   }
 
-  void resetHttpService() {
-    sendCheckReply(F("AT+HTTPTERM"), ok_reply, 2000);
-    sendCheckReply(F("AT+SHDISC"), ok_reply, 3000);
-    sendCheckReply(F("AT+SHDISC"), ok_reply, 3000);
-    delay(200);
-  }
 
-  bool syncClockFromGnss();
-  bool prepareForHttps();
-  bool sapbrUp();
-  bool sapbrHttpsPost(const char *host, const char *path, const char *body);
 
   void configureNetwork() {
     setFunctionality(1);
@@ -196,236 +184,13 @@ void post_telemetry_f();
 void printDebugStatus();
 void updateStatusLED();
 
-extern const char *telemetryUrl;
-extern const char *telemetrySecret;
 extern const char hologramDeviceKey[];
 extern char imei[];
 
-bool BuoyModem::syncClockFromGnss() {
-  if (!gpsUARTOnline || !myGNSS.getPVT()) return false;
-  if (myGNSS.getFixType() < 2) return false;
 
-  const int y = myGNSS.getYear();
-  const int mo = myGNSS.getMonth();
-  const int d = myGNSS.getDay();
-  const int h = myGNSS.getHour();
-  const int mi = myGNSS.getMinute();
-  const int s = myGNSS.getSecond();
-  if (y < 2024 || y > 2099 || mo < 1 || mo > 12 || d < 1 || d > 31) return false;
-
-  char cmd[56];
-  snprintf(cmd, sizeof(cmd), "AT+CCLK=\"%02d/%02d/%02d,%02d:%02d:%02d+00\"",
-           y % 100, mo, d, h, mi, s);
-  if (sendCheckReply(cmd, ok_reply, 5000)) {
-    Serial.println(F("[TELEM] modem clock synced from GPS"));
-    return true;
-  }
-  return false;
-}
-
-bool BuoyModem::prepareForHttps() {
-  static bool loggedFw = false;
-  if (!loggedFw) {
-    getReply(F("AT+CGMR"), (uint16_t)3000);
-    Serial.print(F("[TELEM] modem FW: "));
-    Serial.println(replybuffer);
-    loggedFw = true;
-  }
-
-  // Close NTRIP socket (CIP) so the HTTP/SAPBR stack has the modem to itself.
-  sendCheckReply(F("AT+CIPCLOSE"), ok_reply, 5000);
-  invalidateCipStack();
-  delay(1500);
-
-  if (!ensurePdpActive()) {
-    Serial.println(F("[TELEM] PDP lost after NTRIP close"));
-    return false;
-  }
-
-  resetHttpService();
-  syncClockFromGnss();
-  return true;
-}
 
 // SAPBR is the legacy GPRS bearer the B03/B05 firmware needs for AT+HTTP* + AT+HTTPSSL.
 // It is a separate bearer from CNACT and CIP, and on SIM7000 these can coexist.
-bool BuoyModem::sapbrUp() {
-  sendCheckReply(F("AT+SAPBR=3,1,\"Contype\",\"GPRS\""), ok_reply, 5000);
-  sendCheckReply(F("AT+SAPBR=3,1,\"APN\",\"hologram\""), ok_reply, 5000);
-  // Force public DNS — Hologram on T-Mobile sometimes does not push DNS via PCO.
-  sendCheckReply(F("AT+SAPBR=3,1,\"DNS1\",\"8.8.8.8\""), ok_reply, 5000);
-  sendCheckReply(F("AT+SAPBR=3,1,\"DNS2\",\"1.1.1.1\""), ok_reply, 5000);
-
-  // SAPBR=2,1 returns: +SAPBR: 1,<status>,"<ip>"  ; status==1 means activated.
-  getReply(F("AT+SAPBR=2,1"), (uint16_t)5000);
-  bool active = (strstr(replybuffer, "+SAPBR: 1,1,") != nullptr);
-
-  if (!active) {
-    sendCheckReply(F("AT+SAPBR=1,1"), ok_reply, 60000);
-    getReply(F("AT+SAPBR=2,1"), (uint16_t)5000);
-    active = (strstr(replybuffer, "+SAPBR: 1,1,") != nullptr);
-  }
-
-  if (active) {
-    Serial.print(F("[TELEM] SAPBR: "));
-    Serial.println(replybuffer);
-    // Explicit DNS for the legacy stack (separate from SAPBR DNS option).
-    sendCheckReply(F("AT+CDNSCFG=\"8.8.8.8\",\"1.1.1.1\""), ok_reply, 5000);
-  }
-  return active;
-}
-
-bool BuoyModem::sapbrHttpsPost(const char *host, const char *path, const char *body) {
-  if (!host || !path || !body) return false;
-
-  const size_t bodyLen = strlen(body);
-
-  if (!sapbrUp()) {
-    Serial.println(F("[TELEM] SAPBR bearer down"));
-    return false;
-  }
-
-  // Diagnostic DNS lookup on the SAPBR bearer.
-  // CDNSGIP responds OK first, then "+CDNSGIP: 1,\"<host>\",\"<ip>\"" on a later line.
-  {
-    char dnsCmd[160];
-    snprintf(dnsCmd, sizeof(dnsCmd), "AT+CDNSGIP=\"%s\"", host);
-    flushInput();
-    mySerial->println(dnsCmd);
-    uint32_t dnsDeadline = millis() + 20000;
-    bool gotDns = false;
-    while ((int32_t)(dnsDeadline - millis()) > 0) {
-      readline(2000);
-      if (replybuffer[0] == 0) continue;
-      if (strstr(replybuffer, "+CDNSGIP") || strstr(replybuffer, "ERROR")) {
-        Serial.print(F("[TELEM] DNS: "));
-        Serial.println(replybuffer);
-        gotDns = true;
-        break;
-      }
-    }
-    if (!gotDns) Serial.println(F("[TELEM] DNS: (no response)"));
-  }
-
-  if (!sendCheckReply(F("AT+HTTPINIT"), ok_reply, 5000)) {
-    Serial.print(F("[TELEM] HTTPINIT failed: "));
-    Serial.println(replybuffer);
-    return false;
-  }
-
-  sendCheckReply(F("AT+HTTPPARA=\"CID\",1"), ok_reply, 5000);
-  sendCheckReply(F("AT+HTTPSSL=1"), ok_reply, 5000);
-  sendCheckReply(F("AT+HTTPPARA=\"REDIR\",1"), ok_reply, 5000);
-
-  char cmd[256];
-  snprintf(cmd, sizeof(cmd), "AT+HTTPPARA=\"URL\",\"https://%s%s\"", host, path);
-  if (!sendCheckReply(cmd, ok_reply, 10000)) {
-    Serial.print(F("[TELEM] URL failed: "));
-    Serial.println(replybuffer);
-    sendCheckReply(F("AT+HTTPTERM"), ok_reply, 5000);
-    return false;
-  }
-
-  sendCheckReply(F("AT+HTTPPARA=\"CONTENT\",\"application/json\""), ok_reply, 5000);
-
-  if (telemetrySecret && telemetrySecret[0] != '\0') {
-    char ud[200];
-    int p = snprintf(ud, sizeof(ud), "AT+HTTPPARA=\"USERDATA\",\"BUOY_SECRET: ");
-    for (size_t i = 0; telemetrySecret[i] && p < (int)sizeof(ud) - 8; i++) {
-      const char c = telemetrySecret[i];
-      if (c == '"' || c == '\\') {
-        ud[p++] = '\\';
-      }
-      ud[p++] = c;
-    }
-    p += snprintf(ud + p, sizeof(ud) - p, "\\r\\n\"");
-    sendCheckReply(ud, ok_reply, 5000);
-  }
-
-  flushInput();
-  mySerial->print(F("AT+HTTPDATA="));
-  mySerial->print((unsigned)bodyLen);
-  mySerial->println(F(",30000"));
-
-  uint32_t deadline = millis() + 15000;
-  bool ready = false;
-  while ((int32_t)(deadline - millis()) > 0) {
-    readline(1000);
-    if (strstr(replybuffer, "DOWNLOAD")) {
-      ready = true;
-      break;
-    }
-    if (strstr(replybuffer, "ERROR")) break;
-  }
-  if (!ready) {
-    Serial.println(F("[TELEM] HTTPDATA prompt failed"));
-    sendCheckReply(F("AT+HTTPTERM"), ok_reply, 5000);
-    return false;
-  }
-
-  mySerial->write((const uint8_t *)body, bodyLen);
-
-  deadline = millis() + 30000;
-  bool uploaded = false;
-  while ((int32_t)(deadline - millis()) > 0) {
-    readline(2000);
-    if (replybuffer[0] == 0) continue;
-    if (strcmp(replybuffer, "OK") == 0) {
-      uploaded = true;
-      break;
-    }
-    if (strstr(replybuffer, "ERROR")) break;
-  }
-  if (!uploaded) {
-    Serial.println(F("[TELEM] HTTPDATA upload failed"));
-    sendCheckReply(F("AT+HTTPTERM"), ok_reply, 5000);
-    return false;
-  }
-
-  if (!sendCheckReply(F("AT+HTTPACTION=1"), ok_reply, 10000)) {
-    Serial.print(F("[TELEM] HTTPACTION failed: "));
-    Serial.println(replybuffer);
-    sendCheckReply(F("AT+HTTPTERM"), ok_reply, 5000);
-    return false;
-  }
-
-  bool ok = false;
-  char lastLine[256] = {0};
-  deadline = millis() + 120000;
-  while ((int32_t)(deadline - millis()) > 0) {
-    readline(3000);
-    if (replybuffer[0] == 0) continue;
-    strncpy(lastLine, replybuffer, sizeof(lastLine) - 1);
-    lastLine[sizeof(lastLine) - 1] = '\0';
-
-    if (strstr(replybuffer, "HTTPACTION")) {
-      int method = 0, status = 0, datalen = 0;
-      const char *colon = strchr(replybuffer, ':');
-      if (colon) {
-        sscanf(colon + 1, " %d,%d,%d", &method, &status, &datalen);
-      }
-      if (status >= 200 && status < 300) {
-        ok = true;
-      } else if (status > 0) {
-        Serial.print(F("[TELEM] HTTP status "));
-        Serial.println(status);
-      }
-      break;
-    }
-    if (strstr(replybuffer, "ERROR") || strstr(replybuffer, "CME ERROR")) {
-      break;
-    }
-  }
-
-  if (!ok) {
-    Serial.print(F("[TELEM] modem: "));
-    Serial.println(lastLine[0] ? lastLine : "(no response)");
-  }
-
-  sendCheckReply(F("AT+HTTPTERM"), ok_reply, 5000);
-  return ok;
-}
-
 bool BuoyModem::ensurePdpActive() {
   // GPRS uses AT+CNACT; activating again when already active returns "operation not allowed".
   if (wirelessConnStatus()) return true;
@@ -533,128 +298,6 @@ bool BuoyModem::tcpSendPlain(const char *packet, uint16_t len) {
         strstr(replybuffer, "CLOSED")) return false;
   }
   return false;
-}
-
-bool BuoyModem::httpPostJson(const char *fullUrl, const char *body) {
-  if (!fullUrl || !body || fullUrl[0] == '\0') return false;
-
-  // tcp:// — raw HTTP/1.1 over a plain CIPSTART socket. Designed for ngrok TCP
-  // tunnel → local_portal Flask. This is the ONLY HTTP path proven to work on
-  // SIM7000A firmware B03 (the AT+SH*, AT+HTTP* + HTTPSSL, and AT+CAOPEN stacks
-  // all fail on this firmware after an NTRIP socket has been open).
-  //
-  // URL format: tcp://<host>:<port>/<path>     e.g. tcp://0.tcp.ngrok.io:14723/api/ingest
-  const char *p = fullUrl;
-  bool ssl = false;
-  bool plainTcp = false;
-  if (strncmp(p, "tcp://", 6) == 0) {
-    p += 6;
-    plainTcp = true;
-  } else if (strncmp(p, "https://", 8) == 0) {
-    p += 8;
-    ssl = true;
-  } else if (strncmp(p, "http://", 7) == 0) {
-    p += 7;
-  }
-
-  char host[96];
-  uint16_t port = ssl ? 443 : 80;
-  const char *path = "/";
-  const char *slash = strchr(p, '/');
-  size_t hostPortLen = slash ? (size_t)(slash - p) : strlen(p);
-  if (hostPortLen == 0 || hostPortLen >= sizeof(host)) return false;
-  memcpy(host, p, hostPortLen);
-  host[hostPortLen] = '\0';
-  if (slash) path = slash;
-
-  // Pull explicit ":<port>" off the host string if present.
-  char *colon = strchr(host, ':');
-  if (colon) {
-    *colon = '\0';
-    long parsedPort = strtol(colon + 1, nullptr, 10);
-    if (parsedPort > 0 && parsedPort <= 65535) port = (uint16_t)parsedPort;
-  }
-
-  if (plainTcp) {
-    return tcpHttpPost(host, port, path, body);
-  }
-
-  if (!ssl) {
-    char url[192];
-    snprintf(url, sizeof(url), "http://%s%s", host, path);
-    return postData("POST", url, body);
-  }
-
-  // SIM7000 firmware B03 only supports legacy SAPBR + AT+HTTPSSL=1 for HTTPS.
-  // (AT+SH*, AT+CAOPEN, and CNACT-bound HTTPS were added in B05+.)
-  if (!ensurePdpActive()) {
-    Serial.println(F("[TELEM] PDP not active"));
-    return false;
-  }
-
-  if (!prepareForHttps()) {
-    return false;
-  }
-
-  return sapbrHttpsPost(host, path, body);
-}
-
-bool BuoyModem::tcpHttpPost(const char *host, uint16_t port, const char *path, const char *body) {
-  if (!host || !path || !body) return false;
-
-  const size_t bodyLen = strlen(body);
-
-  // Compose request header. Host header uses the public ngrok address so any
-  // future virtual-hosted server can route correctly; Flask itself ignores it.
-  // BUOY_SECRET is sent only if configured.
-  char req[768];
-  int n;
-  if (telemetrySecret && telemetrySecret[0]) {
-    n = snprintf(req, sizeof(req),
-                 "POST %s HTTP/1.1\r\n"
-                 "Host: %s:%u\r\n"
-                 "User-Agent: rtk-wave-buoy/1\r\n"
-                 "Content-Type: application/json\r\n"
-                 "BUOY_SECRET: %s\r\n"
-                 "Connection: close\r\n"
-                 "Content-Length: %u\r\n\r\n",
-                 path, host, port, telemetrySecret, (unsigned)bodyLen);
-  } else {
-    n = snprintf(req, sizeof(req),
-                 "POST %s HTTP/1.1\r\n"
-                 "Host: %s:%u\r\n"
-                 "User-Agent: rtk-wave-buoy/1\r\n"
-                 "Content-Type: application/json\r\n"
-                 "Connection: close\r\n"
-                 "Content-Length: %u\r\n\r\n",
-                 path, host, port, (unsigned)bodyLen);
-  }
-  if (n <= 0 || (size_t)n + bodyLen >= sizeof(req)) {
-    Serial.println(F("[TELEM] request too large"));
-    return false;
-  }
-  memcpy(req + n, body, bodyLen);
-  const uint16_t total = (uint16_t)((size_t)n + bodyLen);
-
-  if (!tcpConnectPlain(host, port)) {
-    Serial.println(F("[TELEM] TCP connect failed"));
-    return false;
-  }
-
-  bool sent = tcpSendPlain(req, total);
-  if (!sent) {
-    Serial.println(F("[TELEM] TCP send failed"));
-    sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
-    return false;
-  }
-
-  // Give the server a moment to read the body and reply. We don't strictly need
-  // to parse the response — Flask processes the POST as soon as Content-Length
-  // bytes arrive, so SEND OK already proves the request was delivered.
-  delay(1500);
-
-  sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
-  return true;
 }
 
 bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
@@ -1017,10 +660,7 @@ void network_status_check_f() {
 }
 
 void post_telemetry_f() {
-  const bool useHttp =
-      (telemetryUrl != nullptr && telemetryUrl[0] != '\0');
-  const bool useHologram = (hologramDeviceKey[0] != '\0');
-  if (!useHttp && !useHologram) {
+  if (hologramDeviceKey[0] == '\0') {
     return;
   }
   if (!gprsEnabled) {
@@ -1094,35 +734,6 @@ void post_telemetry_f() {
     return;
   }
 
-  // HTTP POST to local portal (ngrok). Pause NTRIP briefly — SIM7000 HTTP stack
-  // often conflicts with an open CIP NTRIP socket.
-  if (useHttp) {
-    bool wasNtrip = ntripConnected;
-    if (wasNtrip) {
-      modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
-      ntripConnected = false;
-      modem.invalidateCipStack();
-      delay(2000);
-      modem.ensurePdpActive();
-    }
-
-    Serial.println(F("[TELEM] HTTP POST..."));
-    if (modem.httpPostJson(telemetryUrl, body)) {
-      Serial.println(F("[TELEM] POST OK"));
-      SerialBT.println(F("[TELEM] POST OK"));
-      noteCellularActivity();
-    } else {
-      Serial.println(F("[TELEM] POST failed"));
-      SerialBT.println(F("[TELEM] POST failed"));
-    }
-
-    if (wasNtrip) {
-      lastNTRIPAttempt = 0;
-    }
-    return;
-  }
-
-  // Optional: Hologram Cloud socket only (view in Hologram dashboard)
   char inner[300];
   int innerLen = 0;
   for (int i = 0; i < n && innerLen < (int)sizeof(inner) - 2; i++) {
