@@ -29,8 +29,19 @@ accelerometer/                             Magnetometer calibration notebook + d
 docs/                                      GitHub Pages dashboard (index.html, data.json)
 .github/workflows/                         Pages deploy + telemetry update workflows
 matlab/                                    Original MATLAB analysis scripts
-documentation/                             Failure paths and recovery reference
+documentation/                             Failure paths reference + student theory guide
 ```
+
+## Educational resources
+
+This repository is designed as a learning platform for embedded systems, marine technology, and precision GNSS coursework. See [`documentation/student-guide.md`](documentation/student-guide.md) for in-depth theory covering:
+
+- **Power architecture:** 12V dual-battery diode ORing, voltage regulation chain, power budgeting
+- **RTK theory:** Carrier-phase tracking, NTRIP corrections, integer ambiguity resolution
+- **Coordinate systems:** WGS84, MSL, and ENU local frames
+- **Sensor fusion:** Combining GNSS altitude with IMU acceleration for wave analysis
+- **Software state machine:** Network registration → GPRS → NTRIP → telemetry → fault recovery
+- **Telemetry pipeline:** End-to-end path from buoy to web dashboard
 
 ## Hardware
 
@@ -43,7 +54,8 @@ documentation/                             Failure paths and recovery reference
 | Adafruit INA228 (Qwiic) | Bus voltage, current, power |
 | u-blox ANN-MB1 antenna + ground plane | GNSS antenna |
 | Hologram SIM | LTE data plan |
-| LiPo batteries | Separate packs for OLA/GPS and ESP32/modem |
+| 2× 12V LiFePO4 batteries + ORing diodes | Redundant power bus (diode-ORed for automatic failover) |
+| Buck converter (12V → 5V) | Step-down for SIM7000 and OLA |
 | microSD (FAT32) | OLA log storage |
 
 ### Wiring
@@ -52,12 +64,20 @@ documentation/                             Failure paths and recovery reference
 ZED-F9P ──Qwiic/I2C──> OpenLog Artemis (address 0x42)
 ZED-F9P ──UART───────> ESP32 (RTCM injection)
 INA228 ──Qwiic/I2C──> ESP32 (SDA 23, SCL 22)
+
+Power:
+12V Batt A ──Diode──┐
+                    +── 12V Bus ── INA228 ── Buck (12V→5V) ── ESP32/Modem/OLA
+12V Batt B ──Diode──┘
 ```
 
 ### Power
 
-- **6000 mAh** — typically OpenLog Artemis + GPS stack
-- **850 mAh** — typically ESP32 + cellular modem
+The buoy is powered by **two 12V LiFePO4 batteries** combined through **ORing diodes** onto a common bus. This provides automatic failover: if one battery is depleted or fails, the other continues to power the system uninterrupted.
+
+- **Batteries:** 2× 12V LiFePO4, diode-ORed to a shared $12\text{V}$ bus
+- **Buck converter:** $12\text{V} \rightarrow 5\text{V}$ for the SIM7000 modem and OpenLog Artemis
+- **ESP32 LDO:** $5\text{V} \rightarrow 3.3\text{V}$ for the ESP32, GNSS receiver, and I2C sensors
 
 | Component | Approx. draw |
 |-----------|-------------|
@@ -66,7 +86,7 @@ INA228 ──Qwiic/I2C──> ESP32 (SDA 23, SCL 22)
 | SIM7000 | ~110–170 mA |
 | ESP32 + OLA | varies with logging rate |
 
-On USB bench power, INA228 may not sit on the active battery rail — serial will show a bench/USB message.
+On USB bench power, the INA228 sits on the $12\text{V}$ bus and will not show active battery voltage — serial will display a bench/USB message.
 
 ### ZED-F9P LED
 
@@ -279,22 +299,22 @@ Each `loop()` iteration:
 
 After field logging, remove the microSD from the OpenLog and process on a PC.
 
+It is recommended to use a Python virtual environment to manage dependencies for both parsing and visualization.
+
 ### UBX to CSV
 
 Binary `.ubx` logs convert with scripts in [`ubx_parsers/`](ubx_parsers/):
 
 | Script | Notes |
 |--------|-------|
-| `ubx_parser.py` | Original parser |
-| `v2_ubx_parser.py` | Common choice — edit filename at bottom |
-| `v3_ubx_parser.py` | Newer message coverage |
+| `v3_ubx_parser.py` | Recommended — High-precision HPPOSLLH coverage |
 
 ```bash
 pip install pyubx2
-python ubx_parsers/v2_ubx_parser.py
+python ubx_parsers/v3_ubx_parser.py
 ```
 
-**CSV columns** (from `v2_ubx_parser.py`):
+**CSV columns** (from `v3_ubx_parser.py`):
 
 `timestamp`, `year`, `month`, `day`, `hour`, `minute`, `second`, `latitude`, `longitude`, `altitude_msl`, `altitude_ellipsoid`, `horizontal_accuracy`, `vertical_accuracy`, `fix_type`, `carrier_solution`, `num_satellites`, `pDOP`, `speed_2d`, `heading`, `flags`
 
@@ -395,9 +415,11 @@ The ZED-F9P reports carrier solution in telemetry (`rtk`: `none`, `float`, `FIXE
 ### Power
 
 | Symptom | Fix |
-|---------|-----|
+|---------|------|
 | INA228 not found | Qwiic cable to ESP32 |
-| Bench/USB message | Expected when not on battery rail |
+| Bench/USB message | Expected when on USB power — INA228 monitors the 12V bus |
+| Bus voltage low | Check diode forward voltage drop; measure before and after each diode |
+| One battery draining faster | Swap battery positions to rule out asymmetric diode drop or regulator load imbalance |
 
 ### General
 
