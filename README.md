@@ -29,6 +29,7 @@ accelerometer/                             Magnetometer calibration notebook + d
 docs/                                      GitHub Pages dashboard (index.html, data.json)
 .github/workflows/                         Pages deploy + telemetry update workflows
 matlab/                                    Original MATLAB analysis scripts
+documentation/                             Failure paths and recovery reference
 ```
 
 ## Hardware
@@ -246,9 +247,11 @@ Each `loop()` iteration:
 1. Network registration and GPRS (`network_status_check_f`, `enable_gprs_f`)
 2. NTRIP connect/retry and RTCM relay (`beginNTRIPClient`, `handleNTRIPData`)
 3. Connection health monitoring (`monitor_connection_health`)
-   - CGREG checked every 30 s — transient drops ignored while RTCM flows
+   - CGREG checked every 30 s — transient drops ignored while RTCM flows (2 min grace)
    - GPRS refreshed if no data for 5 min (`DATA_PATH_STALE_MS`)
-   - Modem hard-reset after 10 consecutive NTRIP failures
+   - **Escalated modem recovery:** RST hard recover (1st trigger) → PWRKEY power cycle (2nd trigger)
+   - Triggers: unregistered **5–10 min**, or **10** consecutive NTRIP failures
+   - Full conditions and cooldowns: [`documentation/failure-paths.md`](documentation/failure-paths.md)
 4. Telemetry on interval (`post_telemetry_f`, default 60 s):
    - Polls ZED-F9P PVT, INA228 power, modem RSSI
    - Sends Hologram Cloud Socket message
@@ -260,10 +263,10 @@ Each `loop()` iteration:
 
 | Tag | Meaning |
 |-----|---------|
-| `[MODEM]` / `[DIAG]` | LTE configuration and registration |
-| `[NET]` | CSQ, CGREG |
-| `[GPRS]` | Packet data attached |
-| `[NTRIP]` | Caster connect / fail |
+| `[MODEM]` / `[DIAG]` | LTE config; `(boot)` / `(recover)`; hard recover / power cycle |
+| `[NET]` | CSQ, CGREG; `connected`, `registration lost` |
+| `[GPRS]` | Packet data; `refresh` (not full power cycle) |
+| `[NTRIP]` | Caster connect / fail; `fail streak` |
 | `[RTCM]` | Throughput to GPS |
 | `[GPS]` | fix type, RTK state, satellites |
 | `[PWR]` | INA228 readings or bench note |
@@ -334,14 +337,21 @@ The ZED-F9P reports carrier solution in telemetry (`rtk`: `none`, `float`, `FIXE
 
 ## Troubleshooting
 
+**Recovery modes (RST → PWRKEY, triggers, cooldowns):** [`documentation/failure-paths.md`](documentation/failure-paths.md)
+
 ### LTE / modem
 
 | Symptom | Fix |
 |---------|-----|
-| `[NET] CSQ=99 CGREG=0` | Wait 1–3 min; move outdoors; check SIM active on Hologram |
-| `[NET] registration lost` | Modem dropped LTE; auto-recovers |
-| CPIN not READY | Reseat SIM; power cycle 30 s |
+| `[NET] CSQ=99 CGREG=0` | Wait 1–3 min; outdoors; check SIM on Hologram. `CSQ=99` can occur while `CGREG=5` still works |
+| `[NET] CSQ=0 CGREG=0` for minutes | Auto RST at **5 min**, then PWRKEY power cycle on next trigger |
+| `[NET] registration lost` | CGREG loss confirmed; waits to re-register |
+| `[MODEM] hard recover` / `[MODEM] power cycle` | Escalated recovery — see failure-paths doc |
+| `[MODEM] * skipped (cooldown)` | Wait 10 min (RST) or 15 min (power cycle) |
+| `[DIAG] CPIN: SIM failure` | Reseat SIM; ESP32 reset. Boot uses `CFUN=1` first — do not use old CFUN=0-only boot builds |
+| CPIN not READY | Reseat SIM; board power cycle 30 s |
 | Stays on wrong band | Set `LTE_CATM_BAND` to `13` for Verizon in `buoy_combo.h` |
+| Hologram US2 outage (ICCID **89418…**) | Check [Hologram status](https://status.hologram.io); carrier-side — firmware cannot fix |
 
 ### NTRIP
 

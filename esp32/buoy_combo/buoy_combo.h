@@ -57,10 +57,36 @@
 #ifndef UNREGISTERED_SEARCHING_GRACE_MS
 #define UNREGISTERED_SEARCHING_GRACE_MS (10UL * 60UL * 1000UL)
 #endif
+#ifndef MODEM_POWER_CYCLE_COOLDOWN_MS
+#define MODEM_POWER_CYCLE_COOLDOWN_MS (15UL * 60UL * 1000UL)
+#endif
+#ifndef MODEM_PWRKEY_OFF_MS
+#define MODEM_PWRKEY_OFF_MS 1600UL
+#endif
+#ifndef MODEM_POWER_OFF_SETTLE_MS
+#define MODEM_POWER_OFF_SETTLE_MS 8000UL
+#endif
+#ifndef MODEM_POST_POWER_ON_MS
+#define MODEM_POST_POWER_ON_MS 5000UL
+#endif
+#ifndef MODEM_AT_READY_TIMEOUT_MS
+#define MODEM_AT_READY_TIMEOUT_MS 20000UL
+#endif
+
+// UART1 to SIM7000 (override in sketch before #include if needed)
+#ifndef TX_MODEM
+#define TX_MODEM 17
+#endif
+#ifndef RX_MODEM
+#define RX_MODEM 16
+#endif
 
 // Hologram / US LTE CAT-M: 12 = AT&T/T-Mobile, 13 = Verizon
 #ifndef LTE_CATM_BAND
 #define LTE_CATM_BAND 12
+#endif
+#ifndef LTE_CATM_US_FALLBACK
+#define LTE_CATM_US_FALLBACK F("AT+CBANDCFG=\"CAT-M\",2,4,12,13")
 #endif
 
 // Plain AT+CIP* TCP for NTRIP. Botletics TCPconnect() uses SSL (AT+CACID/CAOPEN) when
@@ -102,14 +128,110 @@ public:
     Serial.println(replybuffer);
   }
 
-  bool configureLteCatM() {
-    Serial.print(F("[MODEM] LTE CAT-M only, band "));
-    Serial.println(LTE_CATM_BAND);
-    if (!setPreferredMode(38)) return false;
-    if (!setPreferredLTEMode(1)) return false;
-    if (!setOperatingBand("CAT-M", LTE_CATM_BAND)) return false;
+  bool waitModemAtReady(uint32_t timeoutMs = MODEM_AT_READY_TIMEOUT_MS) {
+    const uint32_t deadline = millis() + timeoutMs;
+    while ((int32_t)(deadline - millis()) > 0) {
+      if (sendCheckReply(F("AT"), ok_reply, 2000)) {
+        getReply(F("AT+CPIN?"), (uint16_t)3000);
+        if (strstr(replybuffer, "READY") != nullptr ||
+            strstr(replybuffer, "SIM PIN") != nullptr) {
+          return true;
+        }
+      }
+      delay(500);
+    }
+    return false;
+  }
+
+  bool simPinReady() {
+    getReply(F("AT+CPIN?"), (uint16_t)3000);
+    return (strstr(replybuffer, "READY") != nullptr ||
+            strstr(replybuffer, "SIM PIN") != nullptr);
+  }
+
+  bool ensureCfun1() {
+    getReply(F("AT+CFUN?"), (uint16_t)3000);
+    if (strstr(replybuffer, ": 1") != nullptr) {
+      return true;
+    }
+    if (sendCheckReply(F("AT+CFUN=1"), ok_reply, 30000)) {
+      delay(2000);
+      return true;
+    }
+    Serial.println(F("[MODEM] CFUN=1 failed"));
+    SerialBT.println(F("[MODEM] CFUN=1 failed"));
+    return false;
+  }
+
+  bool cfunIs0() {
+    getReply(F("AT+CFUN?"), (uint16_t)3000);
+    return (strstr(replybuffer, ": 0") != nullptr);
+  }
+
+  bool applyLteCatMBandSettings() {
+    bool ok = true;
+    if (!setPreferredMode(38)) {
+      Serial.println(F("[MODEM] setPreferredMode(38) failed"));
+      SerialBT.println(F("[MODEM] setPreferredMode(38) failed"));
+      ok = false;
+    }
+    if (!setPreferredLTEMode(1)) {
+      Serial.println(F("[MODEM] setPreferredLTEMode(1) failed"));
+      SerialBT.println(F("[MODEM] setPreferredLTEMode(1) failed"));
+      ok = false;
+    }
+
+    char bandCmd[48];
+    snprintf(bandCmd, sizeof(bandCmd), "AT+CBANDCFG=\"CAT-M\",%d", LTE_CATM_BAND);
+    if (!sendCheckReply(bandCmd, ok_reply, 8000)) {
+      Serial.print(F("[MODEM] CBANDCFG band "));
+      Serial.print(LTE_CATM_BAND);
+      Serial.println(F(" failed — trying US 2,4,12,13"));
+      SerialBT.println(F("[MODEM] CBANDCFG fallback 2,4,12,13"));
+      if (!sendCheckReply(LTE_CATM_US_FALLBACK, ok_reply, 8000)) {
+        ok = false;
+      }
+    }
+
     sendCheckReply(F("AT+CGREG=2"), ok_reply, 3000);
-    return true;
+
+    getReply(F("AT+CBANDCFG?"), (uint16_t)3000);
+    Serial.print(F("[MODEM] CBANDCFG: "));
+    Serial.println(replybuffer);
+    SerialBT.print(F("[MODEM] CBANDCFG: "));
+    SerialBT.println(replybuffer);
+
+    return ok;
+  }
+
+  // afterRecover: CFUN=0 band cycle (post-RST/PWRKEY). Boot keeps radio on.
+  bool configureLteCatM(bool afterRecover = false) {
+    Serial.print(F("[MODEM] LTE CAT-M, band "));
+    Serial.print(LTE_CATM_BAND);
+    Serial.println(afterRecover ? F(" (recover)") : F(" (boot)"));
+
+    if (!simPinReady()) {
+      getReply(F("AT+CPIN?"), (uint16_t)3000);
+      Serial.print(F("[MODEM] SKIP band config — CPIN: "));
+      Serial.println(replybuffer);
+      SerialBT.print(F("[MODEM] SKIP band config — CPIN: "));
+      SerialBT.println(replybuffer);
+      return false;
+    }
+
+    if (afterRecover) {
+      if (!sendCheckReply(F("AT+CFUN=0"), ok_reply, 10000) && !cfunIs0()) {
+        Serial.println(F("[MODEM] CFUN=0 failed (recover band config)"));
+        SerialBT.println(F("[MODEM] CFUN=0 failed (recover band config)"));
+        ensureCfun1();
+        return false;
+      }
+      delay(1500);
+    }
+
+    const bool ok = applyLteCatMBandSettings();
+    ensureCfun1();
+    return ok;
   }
 
   void invalidateCipStack() { _cipStackUp = false; }
@@ -119,17 +241,25 @@ public:
     return strchr(replybuffer, '.') != nullptr && strstr(replybuffer, "0.0.0.0") == nullptr;
   }
 
+  void configureNetwork(bool afterRecover = false) {
+    if (!waitModemAtReady()) {
+      Serial.println(F("[MODEM] WARN: modem not AT-ready before config"));
+      SerialBT.println(F("[MODEM] WARN: modem not AT-ready before config"));
+    }
 
+    if (!afterRecover) {
+      setFunctionality(1);
+      delay(2000);
+    }
 
-  void configureNetwork() {
-    setFunctionality(1);
-    delay(1000);
     setNetworkSettings(F("hologram"));
 
-    if (!configureLteCatM()) {
+    if (!configureLteCatM(afterRecover)) {
       Serial.println(F("[MODEM] WARN: LTE CAT-M band config failed"));
       SerialBT.println(F("[MODEM] WARN: LTE CAT-M band config failed"));
     }
+
+    ensureCfun1();
 
     sendCheckReply(F("AT+CGATT=1"), ok_reply, 15000);
     sendCheckReply(F("AT+COPS=0"), ok_reply, 60000);
@@ -159,6 +289,7 @@ extern int maxTimeBeforeHangup_ms;
 extern const unsigned long ntripRetryInterval;
 extern long lastGPSPrint;
 extern BuoyModem modem;
+extern HardwareSerial modemSS;
 extern SFE_UBLOX_GNSS myGNSS;
 extern Adafruit_INA228 ina228;
 extern HardwareSerial gpsSerial;
@@ -179,7 +310,9 @@ void monitor_connection_health();
 void noteCellularActivity();
 void invalidateDataPath(const __FlashStringHelper *reason);
 void refreshGprs_f(const __FlashStringHelper *reason);
-void modemHardRecover_f(const __FlashStringHelper *reason);
+bool modemHardRecover_f(const __FlashStringHelper *reason);
+bool modemPowerCycleRecover_f(const __FlashStringHelper *reason);
+void modemRecoverEscalated_f(const __FlashStringHelper *reason);
 void post_telemetry_f();
 void printDebugStatus();
 void updateStatusLED();
@@ -517,13 +650,30 @@ void refreshGprs_f(const __FlashStringHelper *reason) {
   invalidateDataPath(reason);
 }
 
-void modemHardRecover_f(const __FlashStringHelper *reason) {
+static bool modemLinkBegin() {
+  modemSS.begin(115200, SERIAL_8N1, TX_MODEM, RX_MODEM);
+  modemSS.println(F("AT+IPR=9600"));
+  delay(1000);
+  modemSS.begin(9600, SERIAL_8N1, TX_MODEM, RX_MODEM);
+  return modem.begin(modemSS);
+}
+
+static void modemPwrkeyPowerOff() {
+  pinMode(BOTLETICS_PWRKEY, OUTPUT);
+  digitalWrite(BOTLETICS_PWRKEY, HIGH);
+  delay(100);
+  digitalWrite(BOTLETICS_PWRKEY, LOW);
+  delay(MODEM_PWRKEY_OFF_MS);
+  digitalWrite(BOTLETICS_PWRKEY, HIGH);
+}
+
+bool modemHardRecover_f(const __FlashStringHelper *reason) {
   static unsigned long lastHardMs = 0;
 
   if (millis() - lastHardMs < MODEM_HARD_RECOVER_COOLDOWN_MS) {
     Serial.println(F("[MODEM] hard recover skipped (cooldown)"));
     SerialBT.println(F("[MODEM] hard recover skipped (cooldown)"));
-    return;
+    return false;
   }
   lastHardMs = millis();
 
@@ -545,9 +695,71 @@ void modemHardRecover_f(const __FlashStringHelper *reason) {
   digitalWrite(MODEM_RST_PIN, HIGH);
   delay(3000);
 
-  modem.configureNetwork();
+  modem.configureNetwork(true);
   Serial.println(F("[MODEM] hard recover done — waiting for CGREG"));
   SerialBT.println(F("[MODEM] hard recover done — waiting for CGREG"));
+  return true;
+}
+
+bool modemPowerCycleRecover_f(const __FlashStringHelper *reason) {
+  static unsigned long lastPowerCycleMs = 0;
+
+  if (millis() - lastPowerCycleMs < MODEM_POWER_CYCLE_COOLDOWN_MS) {
+    Serial.println(F("[MODEM] power cycle skipped (cooldown)"));
+    SerialBT.println(F("[MODEM] power cycle skipped (cooldown)"));
+    return false;
+  }
+  lastPowerCycleMs = millis();
+
+  Serial.print(F("[MODEM] power cycle: "));
+  Serial.println(reason);
+  SerialBT.print(F("[MODEM] power cycle: "));
+  SerialBT.println(reason);
+
+  invalidateDataPath(reason);
+  networkConnected = false;
+  consecutiveNtripFailures = 0;
+
+  modem.sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
+  delay(500);
+  modem.sendCheckReply(F("AT+CPOWD=1"), F("NORMAL POWER DOWN"), 5000);
+  delay(2000);
+  modemPwrkeyPowerOff();
+  delay(MODEM_POWER_OFF_SETTLE_MS);
+
+  Serial.println(F("[MODEM] PWRKEY power on..."));
+  SerialBT.println(F("[MODEM] PWRKEY power on..."));
+  pinMode(MODEM_RST_PIN, OUTPUT);
+  digitalWrite(MODEM_RST_PIN, HIGH);
+  modem.powerOn(BOTLETICS_PWRKEY);
+  delay(MODEM_POST_POWER_ON_MS);
+
+  if (!modemLinkBegin()) {
+    Serial.println(F("[MODEM] begin failed after power cycle"));
+    SerialBT.println(F("[MODEM] begin failed after power cycle"));
+    return false;
+  }
+
+  modem.configureNetwork(true);
+  Serial.println(F("[MODEM] power cycle done — waiting for CGREG"));
+  SerialBT.println(F("[MODEM] power cycle done — waiting for CGREG"));
+  return true;
+}
+
+static bool s_modemRecoverNextPowerCycle = false;
+
+void modemRecoverEscalated_f(const __FlashStringHelper *reason) {
+  if (!s_modemRecoverNextPowerCycle) {
+    if (modemHardRecover_f(reason)) {
+      s_modemRecoverNextPowerCycle = true;
+    }
+  } else if (modemPowerCycleRecover_f(reason)) {
+    s_modemRecoverNextPowerCycle = false;
+  }
+}
+
+static void modemRecoverEscalationReset() {
+  s_modemRecoverNextPowerCycle = false;
 }
 
 static bool cgregRegistered(uint8_t n) { return n == 1 || n == 5; }
@@ -614,6 +826,7 @@ void network_status_check_f() {
   }
 
   if (n == 1 || n == 5) {
+    modemRecoverEscalationReset();
     if (!networkConnected) {
       networkConnected = true;
       Serial.println(F("[NET] connected"));
@@ -653,7 +866,7 @@ void network_status_check_f() {
               : UNREGISTERED_HARD_RECOVER_MS;
       if (millis() - unregisteredSinceMs >= limit) {
         unregisteredSinceMs = 0;
-        modemHardRecover_f(F("registration timeout"));
+        modemRecoverEscalated_f(F("registration timeout"));
       }
     }
   }
@@ -1033,7 +1246,7 @@ void monitor_connection_health() {
 
   if (!ntripConnected && gprsEnabled &&
       consecutiveNtripFailures >= NTRIP_FAILURES_BEFORE_HARD_RESET) {
-    modemHardRecover_f(F("NTRIP failures"));
+    modemRecoverEscalated_f(F("NTRIP failures"));
   }
 }
 

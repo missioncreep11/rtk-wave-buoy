@@ -109,14 +109,9 @@ void setup() {
   modem.powerOn(BOTLETICS_PWRKEY);
   delay(5000);
 
-  modemSS.begin(115200, SERIAL_8N1, TX_MODEM, RX_MODEM);
   Serial.println(F("Configuring modem to 9600 baud"));
   SerialBT.println(F("Configuring modem to 9600 baud"));
-  modemSS.println("AT+IPR=9600");
-  delay(1000);
-  modemSS.begin(9600, SERIAL_8N1, TX_MODEM, RX_MODEM);
-
-  if (!modem.begin(modemSS)) {
+  if (!modemLinkBegin()) {
     Serial.println(F("Couldn't find modem"));
     SerialBT.println(F("Couldn't find modem"));
     while (1);
