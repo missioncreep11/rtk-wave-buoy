@@ -2,6 +2,8 @@
 
 This guide provides the theoretical background and engineering details for the RTK Wave Buoy. It is intended as a learning resource for students studying embedded systems, marine technology, and precision GNSS.
 
+**Other docs:** [learning-path.md](learning-path.md) (reading order), [system-architecture.md](system-architecture.md) (diagrams), [wiring-and-pins.md](wiring-and-pins.md), [firmware-walkthrough.md](firmware-walkthrough.md).
+
 ---
 
 ## 🔌 1. Power Architecture: 12V Dual-Battery Diode ORing
@@ -107,16 +109,24 @@ The `buoy_combo` firmware is designed as a robust state machine to handle unstab
 2. **GPRS Activation:** Establishes a packet data connection (PDP context) with the cellular network.
 3. **NTRIP Connection:** Opens a TCP socket to the RTK caster and streams RTCM correction data to the ZED-F9P GNSS receiver via a dedicated UART.
 4. **Telemetry Cycle:** Periodically (every $60$ s by default) closes the NTRIP socket briefly to send a JSON telemetry payload over the Hologram Cloud Socket, then reconnects.
-5. **Health Monitoring:** A dedicated function (`monitor_connection_health`) continuously checks for faults:
+5. **Health Monitoring:** `network_status_check_f()` and `monitor_connection_health()` poll registration and the data path:
 
 | Fault | Detection | Recovery |
 |-------|-----------|----------|
-| CGREG loss | Poll $30$ s; $2$ bad polls in a row | Data path invalidation + GPRS refresh |
-| Stale data path | No RTCM or telemetry for $5$ min | GPRS refresh (PDP re-establish) |
-| NTRIP failure streak | $10$ consecutive connection failures | RST hard recover (Level 1) |
-| Persistent unregistered | No CGREG $1$/$5$ for $5\text{–}10$ min | PWRKEY power cycle (Level 2) |
+| CGREG glitch | Bad `CGREG` while RTCM still flowing | **Ignored** for $2$ min (`CELLULAR_LINK_ALIVE_MS`) |
+| CGREG loss (confirmed) | $2$ bad polls without recent RTCM | Invalidate NTRIP/GPRS — `[DATA] invalidate` |
+| Stale data path | `CGREG` OK but no RTCM/telemetry for $5$ min | GPRS refresh — `[GPRS] refresh` ($2$ min cooldown) |
+| Registration timeout | `CGREG` not $1$/$5$ for $5$ min ($10$ min if searching + good `CSQ`) | **Escalated recover** (see below) |
+| NTRIP failure streak | $10$ consecutive NTRIP failures while GPRS up | **Escalated recover** (see below) |
 
-The recovery system is designed with **cooldowns** ($10$ min for RST, $15$ min for PWRKEY) to prevent rapid cycling that could damage the modem or drain the battery. See [`failure-paths.md`](failure-paths.md) for the full reference.
+**Escalated modem recovery** (`modemRecoverEscalated_f`) — used for both registration timeout and NTRIP failure streak:
+
+1. **First trigger** → RST pin reset + `configureNetwork(true)` — log: `[MODEM] hard recover` (**$10$ min** cooldown)
+2. **Next trigger** (if still stuck) → full PWRKEY power cycle + `modem.begin()` — log: `[MODEM] power cycle` (**$15$ min** cooldown)
+
+When `CGREG` returns to $1$ or $5$, escalation resets to RST-first. **Boot** (`setup()`) uses a separate safe path: radio on first, band config at `CFUN=1` — log `(boot)`. Recover uses optional `CFUN=0` band cycle — log `(recover)`.
+
+Cooldowns prevent rapid modem cycling that could drain the battery. Full timers, serial tags, and a field log example: [`failure-paths.md`](failure-paths.md). Operator quick fixes: [root `README.md` — Troubleshooting](../README.md#troubleshooting).
 
 ### 3.2 The Telemetry Pipeline
 The data flow is designed for maximum availability and low maintenance:
@@ -173,14 +183,16 @@ The ZED-F9P at its NAV-PVT rate ($\sim 10$ Hz) captures the bulk of wave energy 
 | ICM-20948 IMU | $\sim 100$ Hz | Wind waves, chop, high-frequency motion |
 
 ### 4.3 Data Pipeline
-The logged `.ubx` binary files are parsed with `ubx_parsers/v3_ubx_parser.py` which extracts high-precision position (using the `NAV-HPPOSLLH` message for $0.1$ mm resolution). The resulting CSV is fed into the `visualizer/` scripts:
+The logged `.ubx` binary files are parsed with `ubx_parsers/v3_ubx_parser.py` which extracts high-precision position (using the `NAV-HPPOSLLH` message for $0.1$ mm resolution). The resulting CSV is fed into the `Visualizer/` scripts:
 
 ```
-ubx_parsers/v3_ubx_parser.py       → parsed_positions.csv
-visualizer/gnss_visualizer.py       → 2D map + 3D trajectory + precision histogram
-visualizer/imu_visualizer.py        → Accel/gyro/mag temperature plots
-visualizer/altitude_visualizer.py   → Altitude time-series analysis
+ubx_parsers/v3_ubx_parser.py        → *_parsed.csv
+Visualizer/gnss_visualizer.py       → 2D map + 3D trajectory + precision histogram
+Visualizer/imu_visualizer.py        → Accel/gyro/mag temperature plots
+Visualizer/altitude_visualizer.py   → Altitude time-series analysis
 ```
+
+File formats: [data-formats.md](data-formats.md). Doc index: [README.md](README.md).
 
 ---
 
@@ -213,7 +225,9 @@ visualizer/altitude_visualizer.py   → Altitude time-series analysis
 | **No RTK Fixed** | Poor sky view or missing RTCM | Check `[NTRIP] connected` and `[RTCM]` activity in serial logs. Verify NTRIP credentials and caster host. |
 | **Power Rail Fluctuation** | Battery mismatch or diode drop | Measure voltage before and after the blocking diodes using a multimeter. A healthy diode should drop $0.3\text{–}0.4\text{V}$. |
 | **I2C Errors** | Loose Qwiic cable, address conflict, or bus lockup | Run an I2C scanner sketch. Expect devices at $0x40$ (INA228) and $0x42$ (ZED-F9P). Reseat Qwiic cable. |
-| **Modem Not Responding** | Power surge, SIM failure, or cooldown lockout | Check `[MODEM] hard recover` / `[MODEM] * skipped (cooldown)` in serial logs. Verify SIM is active in Hologram dashboard. |
+| **Modem Not Responding** | Power surge, SIM failure, or cooldown lockout | Check `[MODEM] hard recover` then `[MODEM] power cycle` / `* skipped (cooldown)`. See [`failure-paths.md`](failure-paths.md). Verify SIM on Hologram. |
+| **`[DIAG] CPIN: SIM failure`** | Bad SIM contact or dead SIM | Reseat SIM; ESP32 reset. Expect `[MODEM] LTE CAT-M, band 12 (boot)` and `CPIN: READY`. |
+| **Hours OK then `CGREG=0`** | Carrier / Hologram outage possible | Check [Hologram status](https://status.hologram.io); US2 ICCID **89418…** incidents reported |
 | **SD Card Not Mounting** | FAT32 format issue or card damage | Re-format as FAT32. Try a different card. Check OLA menu option to verify mount. |
 | **One Battery Draining Faster** | Asymmetric diode drop or regulator imbalance | Swap battery positions. Measure voltage under load at each battery terminal. |
 | **Serial Monitor Garbage** | Wrong baud rate | Set terminal to $115200$ baud. Check that `BOTLETICS_SSL` is forced to $0$ in the sketch. |

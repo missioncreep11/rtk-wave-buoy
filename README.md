@@ -2,6 +2,8 @@
 
 Centimeter-level RTK positioning for ocean wave and tide work, with onboard SD logging and live telemetry over LTE. Developed at UCSD Scripps Institution of Oceanography and the UC San Diego Department of Mechanical Engineering.
 
+**Documentation:** start with [`documentation/learning-path.md`](documentation/learning-path.md) and the [full index](documentation/README.md).
+
 ```
 NTRIP caster (TCP :2101) <--LTE--> SIM7000 <--UART--> ZED-F9P
                                 |
@@ -24,13 +26,30 @@ esp32/legacy/                              Older WiFi / Polaris sketches (refere
 OpenLog_Artemis_GNSS_Logging_Modified/     OLA high-rate GNSS + IMU logging
 cloudflare_worker/                         Telemetry proxy (Hologram → GitHub)
 ubx_parsers/                               UBX → CSV conversion
-visualizer/                                GNSS / IMU / altitude plotting
+Visualizer/                                GNSS / IMU / altitude plotting
 accelerometer/                             Magnetometer calibration notebook + datasheets
 docs/                                      GitHub Pages dashboard (index.html, data.json)
 .github/workflows/                         Pages deploy + telemetry update workflows
 matlab/                                    Original MATLAB analysis scripts
-documentation/                             Failure paths reference + student theory guide
+documentation/                             Guides — see [documentation/README.md](documentation/README.md)
 ```
+
+## Documentation
+
+| Guide | Link |
+|-------|------|
+| **Start here** (reading order) | [`documentation/learning-path.md`](documentation/learning-path.md) |
+| **System overview** | [`documentation/system-architecture.md`](documentation/system-architecture.md) |
+| **Pins & wiring** | [`documentation/wiring-and-pins.md`](documentation/wiring-and-pins.md) |
+| **Firmware map** | [`documentation/firmware-walkthrough.md`](documentation/firmware-walkthrough.md) |
+| **Data formats** | [`documentation/data-formats.md`](documentation/data-formats.md) |
+| **NTRIP / caster** | [`documentation/ntrip-and-caster-setup.md`](documentation/ntrip-and-caster-setup.md) |
+| **AT commands in logs** | [`documentation/at-command-primer.md`](documentation/at-command-primer.md) |
+| **Deployment checklist** | [`documentation/deployment-checklist.md`](documentation/deployment-checklist.md) |
+| **Field recovery** | [`documentation/failure-paths.md`](documentation/failure-paths.md) |
+| **Student theory** | [`documentation/student-guide.md`](documentation/student-guide.md) |
+| **Legacy vs buoy_combo** | [`documentation/legacy-vs-buoy-combo.md`](documentation/legacy-vs-buoy-combo.md) |
+| **Full index** | [`documentation/README.md`](documentation/README.md) |
 
 ## Educational resources
 
@@ -322,7 +341,7 @@ python ubx_parsers/v3_ubx_parser.py
 
 ### Visualization
 
-Scripts in [`visualizer/`](visualizer/):
+Scripts in [`Visualizer/`](Visualizer/):
 
 | Script | Purpose |
 |--------|---------|
@@ -330,8 +349,10 @@ Scripts in [`visualizer/`](visualizer/):
 | `imu_visualizer.py` | IMU sensor data (accelerometer, gyroscope, magnetometer, temperature) |
 | `altitude_visualizer.py` | Altitude time-series analysis |
 
+Column definitions: [`documentation/data-formats.md`](documentation/data-formats.md).
+
 ```bash
-cd visualizer
+cd Visualizer
 pip install -r requirements.txt
 python gnss_visualizer.py path/to/parsed_positions.csv
 python imu_visualizer.py path/to/imuLog.csv

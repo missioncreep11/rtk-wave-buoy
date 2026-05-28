@@ -1,6 +1,12 @@
 # Failure paths and recovery (`buoy_combo`)
 
-How the buoy detects outages, tears down the cellular data path, and recovers the SIM7000. Symptom → fix: [troubleshooting.md](troubleshooting.md).
+How the buoy detects outages, tears down the cellular data path, and recovers the SIM7000.
+
+| Doc | Use |
+|-----|-----|
+| [student-guide.md](student-guide.md) | Theory — RTK, power, telemetry pipeline |
+| [../README.md](../README.md) | Flash, deploy, troubleshooting tables |
+| This file | Recovery triggers, cooldowns, serial logs |
 
 ---
 
@@ -81,9 +87,42 @@ Every `TELEMETRY_INTERVAL_MS` (default **60 s**): close NTRIP → Hologram send 
 | GPIO 0 shutdown | Modem off; **reset ESP32** to boot modem again |
 | Battery disconnect ~30 s | Full power cycle |
 
+## Example field cascade
+
+```
+[NET] CSQ=0 CGREG=5 (roaming)
+[NET] CSQ=0 CGREG=0 (not registered)
+[HEALTH] CGREG=0 ignored (RTCM active)
+[TELEM] Hologram failed
+[NTRIP] TCP connect failed
+[HEALTH] network lost
+[DATA] invalidate: CGREG health
+[GPS] fix=3 rtk=none
+[MODEM] hard recover: registration timeout
+[MODEM] LTE CAT-M, band 12 (recover)
+... still CGREG=0 ...
+[MODEM] power cycle: registration timeout
+```
+
+RTK returns after: `CGREG` 1/5 → `[GPRS] enabled` → `[NTRIP] connected` → `[RTCM]` → `rtk=FIXED`.
+
 ## Carrier / Hologram
 
 Check [Hologram status](https://status.hologram.io). US2 profiles (ICCID **89418…**) may see intermittent connectivity — firmware cannot override carrier outages.
+
+## Serial tags
+
+| Tag | Meaning |
+|-----|---------|
+| `[NET]` | CSQ, CGREG; `connected`, `registration lost` |
+| `[HEALTH]` | net/rssi/gprs/ntrip/fail; `network lost` |
+| `[DATA] invalidate` | Data path torn down |
+| `[GPRS] refresh` | PDP/CIP refresh (not PWRKEY cycle) |
+| `[MODEM] hard recover` | RST + recover config |
+| `[MODEM] power cycle` | Full PWRKEY cycle |
+| `[MODEM] * skipped (cooldown)` | Recover blocked by timer |
+| `[NTRIP] fail streak=N` | Toward escalated recover |
+| `[TELEM] Hologram failed` | Telemetry socket fail after NTRIP close |
 
 ## Tunables (`buoy_combo.h` / `secrets.h`)
 
@@ -97,3 +136,14 @@ Check [Hologram status](https://status.hologram.io). US2 profiles (ICCID **89418
 | `DATA_PATH_STALE_MS` | 5 min |
 | `CELLULAR_LINK_ALIVE_MS` | 2 min |
 | `TELEMETRY_INTERVAL_MS` | 60 s (`secrets.h`) |
+| `CGREG_BAD_STREAK_LIMIT` | 2 |
+| `GPRS_REFRESH_COOLDOWN_MS` | 2 min |
+| `NETWORK_RECHECK_MS` | 30 s (registered) |
+
+## Related docs
+
+- [student-guide.md](student-guide.md) — §3.1 firmware state machine (theory)
+- [firmware-walkthrough.md](firmware-walkthrough.md) — function map
+- [at-command-primer.md](at-command-primer.md) — CGREG, CSQ, CPIN
+- [../README.md](../README.md) — deployment and troubleshooting
+- [README.md](README.md) — full documentation index
