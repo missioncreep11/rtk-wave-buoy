@@ -7,6 +7,7 @@
 | Document | Audience | Contents |
 |----------|----------|----------|
 | [learning-path.md](learning-path.md) | Everyone | Suggested reading order by goal |
+| [hardware-spec.md](hardware-spec.md) | Build / review | **150 Wh** battery spec, KiCad wiring diagram |
 | [student-guide.md](student-guide.md) | Students | Power, RTK, fusion, pipeline theory, glossary |
 | [system-architecture.md](system-architecture.md) | Students / integrators | Block diagram, dual data paths (LTE vs SD) |
 | [wiring-and-pins.md](wiring-and-pins.md) | Build | ESP32 GPIO, UART, I2C, power bus |
@@ -33,6 +34,6 @@
 | Task | Read |
 |------|------|
 | Understand the system | [learning-path.md](learning-path.md) → [system-architecture.md](system-architecture.md) |
-| Wire the board | [wiring-and-pins.md](wiring-and-pins.md) |
+| Wire the board | [hardware-spec.md](hardware-spec.md) → [wiring-and-pins.md](wiring-and-pins.md) |
 | Debug LTE / NTRIP | [failure-paths.md](failure-paths.md) → [at-command-primer.md](at-command-primer.md) |
 | Process SD logs | [data-formats.md](data-formats.md) → [../Visualizer/README.md](../Visualizer/README.md) |

@@ -40,6 +40,7 @@ documentation/                             Guides — see [documentation/README.
 |-------|------|
 | **Start here** (reading order) | [`documentation/learning-path.md`](documentation/learning-path.md) |
 | **System overview** | [`documentation/system-architecture.md`](documentation/system-architecture.md) |
+| **Hardware spec + wiring diagram** | [`documentation/hardware-spec.md`](documentation/hardware-spec.md) |
 | **Pins & wiring** | [`documentation/wiring-and-pins.md`](documentation/wiring-and-pins.md) |
 | **Firmware map** | [`documentation/firmware-walkthrough.md`](documentation/firmware-walkthrough.md) |
 | **Data formats** | [`documentation/data-formats.md`](documentation/data-formats.md) |
@@ -55,7 +56,7 @@ documentation/                             Guides — see [documentation/README.
 
 This repository is designed as a learning platform for embedded systems, marine technology, and precision GNSS coursework. See [`documentation/student-guide.md`](documentation/student-guide.md) for in-depth theory covering:
 
-- **Power architecture:** 12V dual-battery diode ORing, voltage regulation chain, power budgeting
+- **Power architecture:** dual 3S2P Li-ion (150 Wh), regulation, power budgeting — [hardware-spec.md](documentation/hardware-spec.md)
 - **RTK theory:** Carrier-phase tracking, NTRIP corrections, integer ambiguity resolution
 - **Coordinate systems:** WGS84, MSL, and ENU local frames
 - **Sensor fusion:** Combining GNSS altitude with IMU acceleration for wave analysis
@@ -73,39 +74,39 @@ This repository is designed as a learning platform for embedded systems, marine 
 | Adafruit INA228 (Qwiic) | Bus voltage, current, power |
 | u-blox ANN-MB1 antenna + ground plane | GNSS antenna |
 | Hologram SIM | LTE data plan |
-| 2× 12V LiFePO4 batteries + ORing diodes | Redundant power bus (diode-ORed for automatic failover) |
-| Buck converter (12V → 5V) | Step-down for SIM7000 and OLA |
+| 2× Li-ion **3S2P** 75 Wh packs (parallel) | **~150 Wh** total; 10.8–12.8 V bus |
+| OKI-78SR-3.3 (or equivalent) | Pack → **3.3 V** logic rail |
 | microSD (FAT32) | OLA log storage |
 
 ### Wiring
 
+Full KiCad diagram: [`documentation/hardware-spec.md`](documentation/hardware-spec.md) (includes schematic image).
+
 ```
 ZED-F9P ──Qwiic/I2C──> OpenLog Artemis (address 0x42)
-ZED-F9P ──UART───────> ESP32 (RTCM injection)
+ZED-F9P ──UART2──────> ESP32 GPIO 12/27 (RTCM injection)
 INA228 ──Qwiic/I2C──> ESP32 (SDA 23, SCL 22)
+SIM7000 ──UART1──────> ESP32 GPIO 17/16; PWRKEY → GPIO 18
 
 Power:
-12V Batt A ──Diode──┐
-                    +── 12V Bus ── INA228 ── Buck (12V→5V) ── ESP32/Modem/OLA
-12V Batt B ──Diode──┘
+BT1 (3S2P, 75 Wh) ──┐
+                      ├── Pack bus ── INA228 ── DC-DC → 3.3 V ── ESP32 / modem / GNSS / OLA
+BT2 (3S2P, 75 Wh) ──┘
 ```
 
 ### Power
 
-The buoy is powered by **two 12V LiFePO4 batteries** combined through **ORing diodes** onto a common bus. This provides automatic failover: if one battery is depleted or fails, the other continues to power the system uninterrupted.
+- **Batteries:** 2× **3S2P Li-ion**, **75 Wh** each, wired in **parallel** → **~150 Wh** at **~11 V** nominal (10.8–12.8 V)
+- **Regulation:** Pack bus → **INA228** (telemetry) → switching regulator → **3.3 V** for electronics (per [hardware-spec](documentation/hardware-spec.md))
+- **Runtime (estimate):** ~100 h continuous at ~1.5 W average from pack (verify with field `power_mw`)
 
-- **Batteries:** 2× 12V LiFePO4, diode-ORed to a shared $12\text{V}$ bus
-- **Buck converter:** $12\text{V} \rightarrow 5\text{V}$ for the SIM7000 modem and OpenLog Artemis
-- **ESP32 LDO:** $5\text{V} \rightarrow 3.3\text{V}$ for the ESP32, GNSS receiver, and I2C sensors
-
-| Component | Approx. draw |
-|-----------|-------------|
-| ZED-F9P | ~85 mA |
-| GNSS antenna | ~15 mA |
-| SIM7000 | ~110–170 mA |
+| Component | Approx. draw @ 3.3 V |
+|-----------|----------------------|
+| ZED-F9P + antenna | ~100 mA |
+| SIM7000 | ~110–170 mA (bursts higher) |
 | ESP32 + OLA | varies with logging rate |
 
-On USB bench power, the INA228 sits on the $12\text{V}$ bus and will not show active battery voltage — serial will display a bench/USB message.
+On USB bench power, INA228 may not reflect pack voltage — serial shows a bench/USB message.
 
 ### ZED-F9P LED
 
@@ -438,9 +439,9 @@ The ZED-F9P reports carrier solution in telemetry (`rtk`: `none`, `float`, `FIXE
 | Symptom | Fix |
 |---------|------|
 | INA228 not found | Qwiic cable to ESP32 |
-| Bench/USB message | Expected when on USB power — INA228 monitors the 12V bus |
-| Bus voltage low | Check diode forward voltage drop; measure before and after each diode |
-| One battery draining faster | Swap battery positions to rule out asymmetric diode drop or regulator load imbalance |
+| Bench/USB message | Expected on USB — INA228 may not show pack voltage |
+| Bus voltage low | Charge packs; expect **10.8–12.8 V** on 3S bus per [hardware-spec](documentation/hardware-spec.md) |
+| One pack draining faster | Parallel imbalance — balance/charge packs together; check terminals |
 
 ### General
 

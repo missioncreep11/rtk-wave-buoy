@@ -86,7 +86,7 @@ On modem failure, sketch blocks in `while(1)`.
 
 | Function | Purpose |
 |----------|---------|
-| `initialize_ina228_f()` | I2C INA228 on 12V bus |
+| `initialize_ina228_f()` | I2C INA228 on pack bus |
 | `print_power_status_f()` | `[PWR]` bus V, mW, or bench message |
 | `updateStatusLED()` | Blink vs solid from net/NTRIP state |
 | `gracefulShutdown()` / `shutdownISR()` | User power-down |

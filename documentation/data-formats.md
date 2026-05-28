@@ -23,7 +23,7 @@ Plain JSON inside Hologram Cloud Socket wrapper:
 | `lat` | float | ZED | Decimal degrees (if fix ≥ 2) |
 | `lon` | float | ZED | Decimal degrees |
 | `alt_m` | float | `getAltitudeMSL()` | MSL altitude (m) |
-| `bus_v` | float | INA228 | 12V bus voltage (V); 0 on bench/USB note path |
+| `bus_v` | float | INA228 | Pack bus voltage (V, ~10.8–12.8); 0 on bench/USB note path |
 | `power_mw` | float | INA228 | Bus power (mW) |
 | `rssi` | uint | `AT+CSQ` | 0–31 (99 = unknown) |
 | `ntrip` | 0/1 | Firmware | 1 if NTRIP TCP connected |

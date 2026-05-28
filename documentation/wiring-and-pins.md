@@ -2,7 +2,8 @@
 
 ESP32 Thing Plus (WRL-15663) pin assignments for **`esp32/buoy_combo`**. Override defaults in `buoy_combo.ino` before `#include "buoy_combo.h"` if your harness differs.
 
-Architecture context: [system-architecture.md](system-architecture.md).
+Architecture context: [system-architecture.md](system-architecture.md).  
+**KiCad wiring diagram:** [hardware-spec.md](hardware-spec.md).
 
 ---
 
@@ -54,16 +55,18 @@ The ZED-F9P on the **OLA** Qwiic chain (0x42) is **not** on the ESP32 I2C bus in
 
 ## Power wiring (system)
 
-```text
-12V Batt A ──[diode]──┐
-                      ├── 12V bus ── INA228 shunt ── buck ── 5V (modem, OLA)
-12V Batt B ──[diode]──┘                              └── ESP32 USB/regulator path (bench)
+Per KiCad **rtk-wave-buoy** ([diagram](hardware-spec.md)):
 
-ESP32: 5V/LDO → 3.3V (MCU, ZED logic, I2C)
+```text
+BT1 (3S2P, 75 Wh) ──┐
+                      ├── Pack bus (10.8–12.8 V) ── INA228 ── OKI-78SR-3.3 ── 3.3 V
+BT2 (3S2P, 75 Wh) ──┘         ~150 Wh total              │
+                                                    ESP32 · modem · ZED · OLA
 ```
 
-- INA228 measures **12V bus** before the buck (see [student-guide.md](student-guide.md) §1.3).
-- On **USB bench power**, `bus_v` in telemetry may not reflect batteries — serial shows a bench note via `print_power_status_f()`.
+- **2× 75 Wh** Li-ion **3S2P** packs in **parallel** (~**150 Wh**).
+- INA228 on the **pack bus** (see [hardware-spec.md](hardware-spec.md)).
+- On **USB bench power**, `bus_v` in telemetry may not reflect packs — serial shows a bench note via `print_power_status_f()`.
 
 ---
 
@@ -73,7 +76,7 @@ ESP32: 5V/LDO → 3.3V (MCU, ZED logic, I2C)
 |------------|--------|
 | ZED-F9P ↔ OLA | Qwiic I2C (logging firmware) |
 | microSD | FAT32 in OLA |
-| 5V | From buck rail with modem |
+| 3.3 V | From pack DC-DC (schematic); OLA/modem on logic rail |
 
 OLA pins are defined in `OpenLog_Artemis_GNSS_Logging_Modified/` — flash the Artemis board, not the ESP32. See [../README.md](../README.md) §2.
 

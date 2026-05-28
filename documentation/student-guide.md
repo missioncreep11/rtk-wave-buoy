@@ -2,67 +2,55 @@
 
 This guide provides the theoretical background and engineering details for the RTK Wave Buoy. It is intended as a learning resource for students studying embedded systems, marine technology, and precision GNSS.
 
-**Other docs:** [learning-path.md](learning-path.md) (reading order), [system-architecture.md](system-architecture.md) (diagrams), [wiring-and-pins.md](wiring-and-pins.md), [firmware-walkthrough.md](firmware-walkthrough.md).
+**Other docs:** [hardware-spec.md](hardware-spec.md) (wiring diagram), [learning-path.md](learning-path.md), [system-architecture.md](system-architecture.md), [wiring-and-pins.md](wiring-and-pins.md), [firmware-walkthrough.md](firmware-walkthrough.md).
 
 ---
 
-## 🔌 1. Power Architecture: 12V Dual-Battery Diode ORing
+## 🔌 1. Power Architecture: Dual 3S2P Li-ion (150 Wh)
 
-The buoy uses a redundant power system designed for longevity and reliability in harsh marine environments.
+The buoy uses two **Li-ion 3S2P** packs (**75 Wh** each) wired in **parallel** on a shared bus (~**10.8–12.8 V**, nominal **~11.1 V**), for **~150 Wh** total stored energy. Full schematic and BOM: [hardware-spec.md](hardware-spec.md).
 
-### 1.1 Diode ORing for Redundancy
-Instead of a single battery, the buoy utilizes two 12V LiFePO4 batteries combined via **ORing diodes**.
+### 1.1 Parallel packs
 
-**Schematic:**
 ```
-12V Batt A ──[Schottky Diode]──┐
-                                +── 12V Power Bus ── INA228 ── Buck (12V→5V)
-12V Batt B ──[Schottky Diode]──┘                                       │
-                                                                        ├── SIM7000 (5V)
-                                                                        └── OLA (5V)
-                                                                                │
-                                                                          ESP32 LDO (5V→3.3V)
-                                                                                │
-                                                                           ┌────┴────┐
-                                                                        ZED-F9P   I2C Sensors
+BT1 (3S2P, 75 Wh) ──┐
+                      ├── Pack bus ── INA228 ── OKI-78SR-3.3 ── 3.3 V rail
+BT2 (3S2P, 75 Wh) ──┘              │
+                                ESP32 · SIM7000 · ZED-F9P · OpenLog Artemis
 ```
 
 **How it works:**
-Each battery is connected to a common power bus through a blocking diode. This configuration ensures that:
-- **Redundancy:** If one battery fails or is disconnected, the other continues to power the system without interruption.
-- **Reverse Protection:** Diodes prevent current from flowing from one battery into another, protecting against back-charging and potential damage if one battery's internal resistance drops significantly (short circuit).
+- **Parallel wiring** ties both pack positives together and both negatives together, so bus voltage stays at one pack’s voltage while **amp-hour / Wh capacity adds**.
+- **Redundancy:** If one pack is unplugged or open-circuits, the other can still feed the bus (use matched packs and appropriate pack protection).
+- **3S2P per pack:** Three cells in series (voltage) × two parallel strings (current capacity) per physical pack.
 
-**Diode Types:**
-- **Schottky Diodes:** Common for this application due to their low forward voltage drop ($\sim 0.3\text{V}$ to $0.4\text{V}$).
-- **Ideal Diodes:** For higher efficiency, MOSFET-based "ideal diode" controllers can be used, reducing the voltage drop to millivolts and eliminating heat dissipation.
+Official wiring diagram (KiCad **rtk-wave-buoy**):
 
-### 1.2 Voltage Regulation Chain
-Since the buoy's electronics operate at low voltages, the $12\text{V}$ bus is stepped down through a regulation chain:
+![Wiring diagram](assets/wiring-diagram.png)
 
-1. **$12\text{V}$ Bus $\rightarrow$ Buck Regulator $\rightarrow$ $5\text{V}$ Rail:** A high-efficiency DC-DC buck converter reduces $12\text{V}$ to $5\text{V}$. This rail powers the SIM7000 LTE modem and the OpenLog Artemis.
-2. **$5\text{V}$ Rail $\rightarrow$ LDO $\rightarrow$ $3.3\text{V}$ Rail:** The ESP32's onboard Low-Dropout (LDO) regulator further reduces the voltage to $3.3\text{V}$ for the microprocessor, I2C sensors, and the ZED-F9P GNSS receiver.
+### 1.2 Voltage regulation
 
-**Why a buck converter instead of a linear regulator?**
-- A linear regulator would dissipate $(12\text{V} - 5\text{V}) \times I$ as heat, which is extremely inefficient at the buoy's typical currents ($>150$ mA).
-- A buck (switching) regulator operates at $>85\%$ efficiency, meaning most of the power reaches the load rather than being wasted as heat.
-- This is critical in a battery-powered marine deployment where every watt-hour matters.
+Pack voltage is stepped down by a switching regulator (**OKI-78SR-3.3** in the schematic) to a **3.3 V** logic rail that supplies the ESP32, modem, GNSS, and logger (see [hardware-spec.md](hardware-spec.md)).
 
-### 1.3 Power Budgeting
-Calculating runtime involves summing the average current draw of all components and accounting for regulator efficiency ($\eta$):
+**Why switching regulation?**
+- Dropping $\sim 11\text{ V}$ to $3.3\text{ V}$ with a linear regulator would waste most energy as heat at modem peak currents.
+- A buck converter keeps efficiency high — important when only **150 Wh** is available offshore.
 
-$$ \text{Total Power (W)} = \frac{\sum (\text{Voltage} \times \text{Current})}{\eta} $$
+### 1.3 Power budgeting
 
-**Example budget:**
+$$ P_{\text{pack}} \approx \frac{\sum (V_{\text{rail}} \times I)}{\eta_{\text{DC-DC}}} $$
+
+**Example budget** (3.3 V rails, illustrative):
+
 | Component | Voltage | Current | Power |
 |-----------|---------|---------|-------|
-| ZED-F9P | 3.3V | 85 mA | 0.28 W |
-| GNSS antenna | 3.3V | 15 mA | 0.05 W |
-| SIM7000 (avg) | 5V | 150 mA | 0.75 W |
-| ESP32 | 3.3V | 100 mA | 0.33 W |
-| OLA | 5V | 50 mA | 0.25 W |
-| **Total** | | | **1.66 W** |
+| ZED-F9P + antenna | 3.3V | ~100 mA | ~0.33 W |
+| SIM7000 (avg) | 3.3V | ~150 mA | ~0.50 W |
+| ESP32 | 3.3V | ~100 mA | ~0.33 W |
+| OLA | 3.3V | ~50 mA | ~0.17 W |
+| **Total @ 3.3 V** | | | **~1.3 W** |
 
-With a 90% efficient buck regulator, the actual power drawn from the $12\text{V}$ bus is $1.66\text{W} / 0.90 \approx 1.84\text{W}$. A typical 12V 5Ah LiFePO4 battery provides $60\text{Wh}$, so two batteries provide $120\text{Wh}$ — over 65 hours of continuous runtime.
+With $\eta \approx 85\%$ from an $11\text{ V}$ pack: $P_{\text{pack}} \approx 1.5\text{ W}$. **150 Wh** $\div 1.5\text{ W} \approx$ **100 hours** (~4 days) of continuous operation before depletion (average load; LTE bursts reduce margin).
 
 ---
 
@@ -206,7 +194,7 @@ File formats: [data-formats.md](data-formats.md). Doc index: [README.md](README.
 
 ### 5.2 INA228 Power Monitor
 - Measures bus voltage ($0\text{–}85$ V), shunt current, and power
-- Connected to the $12\text{V}$ bus before the buck regulator to measure total system draw
+- Connected on the **battery pack bus** (input to the 3.3 V regulator) to report total system draw in telemetry
 - **Shunt resistor:** $15$ m$\Omega$ on the Adafruit breakout, rated to $10$ A
 - **I2C address:** $0x40$ (default) or $0x45$ (ALTERNATE pin high)
 
@@ -223,13 +211,13 @@ File formats: [data-formats.md](data-formats.md). Doc index: [README.md](README.
 | Symptom | Likely Cause | Diagnostic Step |
 | :--- | :--- | :--- |
 | **No RTK Fixed** | Poor sky view or missing RTCM | Check `[NTRIP] connected` and `[RTCM]` activity in serial logs. Verify NTRIP credentials and caster host. |
-| **Power Rail Fluctuation** | Battery mismatch or diode drop | Measure voltage before and after the blocking diodes using a multimeter. A healthy diode should drop $0.3\text{–}0.4\text{V}$. |
+| **Power Rail Fluctuation** | Unmatched parallel packs or weak cell | Measure each pack at rest and under load; parallel only matched SOC packs. |
 | **I2C Errors** | Loose Qwiic cable, address conflict, or bus lockup | Run an I2C scanner sketch. Expect devices at $0x40$ (INA228) and $0x42$ (ZED-F9P). Reseat Qwiic cable. |
 | **Modem Not Responding** | Power surge, SIM failure, or cooldown lockout | Check `[MODEM] hard recover` then `[MODEM] power cycle` / `* skipped (cooldown)`. See [`failure-paths.md`](failure-paths.md). Verify SIM on Hologram. |
 | **`[DIAG] CPIN: SIM failure`** | Bad SIM contact or dead SIM | Reseat SIM; ESP32 reset. Expect `[MODEM] LTE CAT-M, band 12 (boot)` and `CPIN: READY`. |
 | **Hours OK then `CGREG=0`** | Carrier / Hologram outage possible | Check [Hologram status](https://status.hologram.io); US2 ICCID **89418…** incidents reported |
 | **SD Card Not Mounting** | FAT32 format issue or card damage | Re-format as FAT32. Try a different card. Check OLA menu option to verify mount. |
-| **One Battery Draining Faster** | Asymmetric diode drop or regulator imbalance | Swap battery positions. Measure voltage under load at each battery terminal. |
+| **One pack draining faster** | Parallel imbalance or different cell health | Balance/charge packs together; swap leads to test; check `bus_v` in telemetry. |
 | **Serial Monitor Garbage** | Wrong baud rate | Set terminal to $115200$ baud. Check that `BOTLETICS_SSL` is forced to $0$ in the sketch. |
 | **Cloudflare Worker 401** | Mismatched `BUOY_SECRET` | Verify the secret matches between Hologram Alert header and Cloudflare environment variable. |
 

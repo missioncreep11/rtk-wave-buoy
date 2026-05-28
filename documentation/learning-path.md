@@ -4,27 +4,28 @@ Suggested reading order for someone new to the RTK Wave Buoy. Each step links to
 
 ## Before you touch hardware
 
-1. [student-guide.md](student-guide.md) — §1 Power, §2 RTK theory (skim if you already know GNSS)
-2. [system-architecture.md](system-architecture.md) — how ESP32, OLA, modem, and ZED fit together
+1. [hardware-spec.md](hardware-spec.md) — batteries (150 Wh), wiring diagram, BOM
+2. [student-guide.md](student-guide.md) — §1 Power, §2 RTK theory (skim if you already know GNSS)
+3. [system-architecture.md](system-architecture.md) — how ESP32, OLA, modem, and ZED fit together
 
 ## Build and deploy
 
-3. [../README.md](../README.md) — Quick start (ESP32, OLA, Cloudflare, Hologram, GitHub Pages)
-4. [wiring-and-pins.md](wiring-and-pins.md) — pin table before wiring or debugging UART/I2C
-5. [ntrip-and-caster-setup.md](ntrip-and-caster-setup.md) — `secrets.h`, caster, `BOTLETICS_SSL=0`
-6. [deployment-checklist.md](deployment-checklist.md) — pre-deployment checks
+4. [../README.md](../README.md) — Quick start (ESP32, OLA, Cloudflare, Hologram, GitHub Pages)
+5. [wiring-and-pins.md](wiring-and-pins.md) — pin table before wiring or debugging UART/I2C
+6. [ntrip-and-caster-setup.md](ntrip-and-caster-setup.md) — `secrets.h`, caster, `BOTLETICS_SSL=0`
+7. [deployment-checklist.md](deployment-checklist.md) — pre-deployment checks
 
 ## Firmware and logs
 
-7. [firmware-walkthrough.md](firmware-walkthrough.md) — `setup()` / `loop()` and main functions
-8. [at-command-primer.md](at-command-primer.md) — what `CGREG`, `CSQ`, etc. mean in serial output
-9. [failure-paths.md](failure-paths.md) — recovery modes when LTE or NTRIP fails
+8. [firmware-walkthrough.md](firmware-walkthrough.md) — `setup()` / `loop()` and main functions
+9. [at-command-primer.md](at-command-primer.md) — what `CGREG`, `CSQ`, etc. mean in serial output
+10. [failure-paths.md](failure-paths.md) — recovery modes when LTE or NTRIP fails
 
 ## Data and analysis
 
-10. [data-formats.md](data-formats.md) — telemetry JSON, UBX/CSV, IMU CSV, `docs/data.json`
-11. [../README.md](../README.md) — Data processing (UBX parse, Visualizer)
-12. [../Visualizer/README.md](../Visualizer/README.md) — post-processing scripts
+11. [data-formats.md](data-formats.md) — telemetry JSON, UBX/CSV, IMU CSV, `docs/data.json`
+12. [../README.md](../README.md) — Data processing (UBX parse, Visualizer)
+13. [../Visualizer/README.md](../Visualizer/README.md) — post-processing scripts
 
 ## Reference only
 

@@ -9,24 +9,17 @@ Theory detail: [student-guide.md](student-guide.md). Pin numbers: [wiring-and-pi
 ## Physical stack
 
 ```text
-                    ┌─────────────────────────────────────┐
-                    │  2× 12V LiFePO4 + ORing diodes      │
-                    └──────────────────┬──────────────────┘
-                                       │ 12V bus
-                                  INA228 (I2C → ESP32)
-                                       │
-                              Buck 12V → 5V
-                         ┌─────────────┴─────────────┐
-                         │                           │
-                   SIM7000 shield              OpenLog Artemis
-                   (LTE, 5V)                   (SD, 5V, Qwiic)
-                         │                           │
-                    UART1 → ESP32              I2C → ZED-F9P
-                         │                           │
-                    ESP32 Thing Plus ──UART2──► ZED-F9P (RTCM in)
-                    (3.3V, LTE+NTRIP+telemetry)     │
-                                              GNSS antenna
+        BT1 (3S2P, 75 Wh) ──┐
+                            ├── Pack bus (~11 V) ── INA228 ── DC-DC → 3.3 V
+        BT2 (3S2P, 75 Wh) ──┘                              │
+                    ~150 Wh total                          │
+                         ┌─────────────────────────────────┼──────────────┐
+                         │                                 │              │
+                   SIM7000 shield                   OpenLog Artemis    ESP32 Thing Plus
+                   UART1 + PWRKEY                   I2C → ZED (log)    I2C + UART2 → ZED (RTCM)
 ```
+
+Wiring diagram: [hardware-spec.md](hardware-spec.md).
 
 | Node | Role |
 |------|------|
@@ -35,7 +28,7 @@ Theory detail: [student-guide.md](student-guide.md). Pin numbers: [wiring-and-pi
 | **ZED-F9P** | RTK GNSS; RTCM corrections on UART1 (from ESP32); position to ESP32 (UART PVT) and OLA (I2C logging) |
 | **SIM7000** | LTE CAT-M, TCP to NTRIP caster and Hologram Cloud Socket |
 
-Power detail: [student-guide.md](student-guide.md) §1, [../README.md](../README.md) Hardware.
+Power detail: [hardware-spec.md](hardware-spec.md), [student-guide.md](student-guide.md) §1.
 
 ---
 
@@ -87,7 +80,7 @@ Recovery (RST → PWRKEY): [failure-paths.md](failure-paths.md).
 
 | Bus | Devices | Purpose |
 |-----|---------|---------|
-| **I2C** (ESP32) | INA228 @ 0x40 | 12V bus power telemetry |
+| **I2C** (ESP32) | INA228 @ 0x40 | Pack bus voltage / current / power |
 | **I2C** (OLA Qwiic) | ZED @ 0x42, ICM-20948 | SD logging (independent of ESP32 loop) |
 | **UART1** | ESP32 ↔ SIM7000 | AT commands, NTRIP TCP, Hologram TCP |
 | **UART2** | ESP32 ↔ ZED UART1 | RTCM3 in, UBX PVT out for live fix/telemetry |

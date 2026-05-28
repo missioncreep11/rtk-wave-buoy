@@ -43,7 +43,8 @@ Run outdoors or strong indoor cell signal, serial **115200**:
 
 ## Hardware and mechanical
 
-- [ ] Both 12V batteries charged; ORing diodes correct polarity
+- [ ] Both **3S2P 75 Wh** packs charged and matched SOC; **parallel** wiring (+ to +, − to −)
+- [ ] Pack bus **10.8–12.8 V** at rest; INA228 / OKI-78SR-3.3 installed per [hardware-spec.md](hardware-spec.md)
 - [ ] GNSS antenna with clear sky view (not under deck/roof for test)
 - [ ] ZED UART2 wiring: ESP32 GPIO 12/27 ↔ F9P UART1 ([wiring-and-pins.md](wiring-and-pins.md))
 - [ ] Qwiic/SD connections secure on OLA
