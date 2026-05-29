@@ -45,6 +45,7 @@ documentation/                             Guides — see [documentation/README.
 | **Firmware map** | [`documentation/firmware-walkthrough.md`](documentation/firmware-walkthrough.md) |
 | **Data formats** | [`documentation/data-formats.md`](documentation/data-formats.md) |
 | **NTRIP / caster** | [`documentation/ntrip-and-caster-setup.md`](documentation/ntrip-and-caster-setup.md) |
+| **Point One Polaris (VRS)** | [`documentation/polaris-exploration.md`](documentation/polaris-exploration.md) |
 | **AT commands in logs** | [`documentation/at-command-primer.md`](documentation/at-command-primer.md) |
 | **Deployment checklist** | [`documentation/deployment-checklist.md`](documentation/deployment-checklist.md) |
 | **Field recovery** | [`documentation/failure-paths.md`](documentation/failure-paths.md) |

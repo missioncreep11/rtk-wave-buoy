@@ -52,6 +52,8 @@ See comments in `esp32_polaris_wifi.ino` and [wiring-and-pins.md](wiring-and-pin
 - Comparing Polaris HTTP/2.0 client behavior to LTE plain TCP
 - Teaching SparkFun NTRIP examples before introducing modem complexity
 
+Polaris history (WiFi → LTE trials, reverted `ntrip_profile.h`, field logs): [polaris-exploration.md](polaris-exploration.md).
+
 ---
 
 ## Migration notes

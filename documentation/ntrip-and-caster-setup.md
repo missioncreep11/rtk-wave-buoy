@@ -67,7 +67,7 @@ RTK accuracy depends on distance to the correction source:
 - **Near caster / VRS:** often fixes in minutes with open sky.
 - **Long baseline:** float longer or no fix; multipath on water makes it harder.
 
-The buoy does not send NMEA GGA to the caster in all builds — confirm your caster allows fixed-position or IP-based rovers. If your caster requires periodic GGA (e.g. some VRS services), you may need firmware support not described here; legacy WiFi Polaris sketches do send GGA.
+The buoy does not send NMEA GGA to the caster in the shipped `buoy_combo` build — confirm your caster allows fixed-position or IP-based rovers. **Point One Polaris (VRS) requires GGA and NTRIP 2.0 chunked HTTP**; see [polaris-exploration.md](polaris-exploration.md) and `esp32/legacy/esp32_polaris_wifi.ino`.
 
 ---
 

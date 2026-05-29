@@ -8,6 +8,9 @@
 #include <HardwareSerial.h>
 #include <Wire.h>
 #include <cstring>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_system.h>
+#endif
 
 // Add base64 library
 #if defined(ARDUINO_ARCH_ESP32)
@@ -68,6 +71,21 @@
 #endif
 #ifndef MODEM_POST_POWER_ON_MS
 #define MODEM_POST_POWER_ON_MS 5000UL
+#endif
+#ifndef MODEM_BOOT_POWER_ON_MS
+#define MODEM_BOOT_POWER_ON_MS 5000UL
+#endif
+#ifndef MODEM_POST_RST_MS
+#define MODEM_POST_RST_MS 5000UL
+#endif
+#ifndef MODEM_FULL_POWER_OFF_SETTLE_MS
+#define MODEM_FULL_POWER_OFF_SETTLE_MS (20UL * 1000UL)
+#endif
+#ifndef REGISTERED_STABLE_MS
+#define REGISTERED_STABLE_MS (2UL * 60UL * 1000UL)
+#endif
+#ifndef MODEM_STUCK_FORCE_CYCLE_MS
+#define MODEM_STUCK_FORCE_CYCLE_MS (30UL * 60UL * 1000UL)
 #endif
 #ifndef MODEM_AT_READY_TIMEOUT_MS
 #define MODEM_AT_READY_TIMEOUT_MS 20000UL
@@ -311,7 +329,8 @@ void noteCellularActivity();
 void invalidateDataPath(const __FlashStringHelper *reason);
 void refreshGprs_f(const __FlashStringHelper *reason);
 bool modemHardRecover_f(const __FlashStringHelper *reason);
-bool modemPowerCycleRecover_f(const __FlashStringHelper *reason);
+bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
+                              bool bypassCooldown = false);
 void modemRecoverEscalated_f(const __FlashStringHelper *reason);
 void post_telemetry_f();
 void printDebugStatus();
@@ -658,6 +677,29 @@ static bool modemLinkBegin() {
   return modem.begin(modemSS);
 }
 
+static void modemUartFlush() {
+  const uint32_t deadline = millis() + 500;
+  while ((int32_t)(deadline - millis()) > 0) {
+    while (modemSS.available()) {
+      (void)modemSS.read();
+    }
+    delay(10);
+  }
+}
+
+// Match setup(): UART re-probe + boot-style network config (not CFUN=0 recover path).
+static bool modemColdBootSequence() {
+  modem.invalidateCipStack();
+  modemUartFlush();
+  if (!modemLinkBegin()) {
+    Serial.println(F("[MODEM] UART/begin failed"));
+    SerialBT.println(F("[MODEM] UART/begin failed"));
+    return false;
+  }
+  modem.configureNetwork(false);
+  return true;
+}
+
 static void modemPwrkeyPowerOff() {
   pinMode(BOTLETICS_PWRKEY, OUTPUT);
   digitalWrite(BOTLETICS_PWRKEY, HIGH);
@@ -693,18 +735,25 @@ bool modemHardRecover_f(const __FlashStringHelper *reason) {
   digitalWrite(MODEM_RST_PIN, LOW);
   delay(300);
   digitalWrite(MODEM_RST_PIN, HIGH);
-  delay(3000);
+  delay(MODEM_POST_RST_MS);
 
-  modem.configureNetwork(true);
-  Serial.println(F("[MODEM] hard recover done — waiting for CGREG"));
-  SerialBT.println(F("[MODEM] hard recover done — waiting for CGREG"));
-  return true;
+  if (modemColdBootSequence()) {
+    Serial.println(F("[MODEM] hard recover done — waiting for CGREG"));
+    SerialBT.println(F("[MODEM] hard recover done — waiting for CGREG"));
+    return true;
+  }
+
+  Serial.println(F("[MODEM] hard recover config failed — full power cycle"));
+  SerialBT.println(F("[MODEM] hard recover config failed — full power cycle"));
+  return modemPowerCycleRecover_f(F("hard recover config failed"), true);
 }
 
-bool modemPowerCycleRecover_f(const __FlashStringHelper *reason) {
+bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
+                              bool bypassCooldown) {
   static unsigned long lastPowerCycleMs = 0;
 
-  if (millis() - lastPowerCycleMs < MODEM_POWER_CYCLE_COOLDOWN_MS) {
+  if (!bypassCooldown &&
+      millis() - lastPowerCycleMs < MODEM_POWER_CYCLE_COOLDOWN_MS) {
     Serial.println(F("[MODEM] power cycle skipped (cooldown)"));
     SerialBT.println(F("[MODEM] power cycle skipped (cooldown)"));
     return false;
@@ -723,38 +772,48 @@ bool modemPowerCycleRecover_f(const __FlashStringHelper *reason) {
   modem.sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
   delay(500);
   modem.sendCheckReply(F("AT+CPOWD=1"), F("NORMAL POWER DOWN"), 5000);
-  delay(2000);
+  delay(1000);
   modemPwrkeyPowerOff();
-  delay(MODEM_POWER_OFF_SETTLE_MS);
+  Serial.println(F("[MODEM] modem off — settling (battery-like delay)"));
+  SerialBT.println(F("[MODEM] modem off — settling"));
+  delay(MODEM_FULL_POWER_OFF_SETTLE_MS);
 
   Serial.println(F("[MODEM] PWRKEY power on..."));
   SerialBT.println(F("[MODEM] PWRKEY power on..."));
   pinMode(MODEM_RST_PIN, OUTPUT);
   digitalWrite(MODEM_RST_PIN, HIGH);
   modem.powerOn(BOTLETICS_PWRKEY);
-  delay(MODEM_POST_POWER_ON_MS);
+  delay(MODEM_BOOT_POWER_ON_MS);
 
-  if (!modemLinkBegin()) {
-    Serial.println(F("[MODEM] begin failed after power cycle"));
-    SerialBT.println(F("[MODEM] begin failed after power cycle"));
-    return false;
+  const bool ok = modemColdBootSequence();
+  Serial.println(ok ? F("[MODEM] power cycle done — waiting for CGREG")
+                  : F("[MODEM] power cycle done (config failed)"));
+  SerialBT.println(ok ? F("[MODEM] power cycle done — waiting for CGREG")
+                    : F("[MODEM] power cycle done (config failed)"));
+#if defined(ARDUINO_ARCH_ESP32)
+  if (!ok) {
+    Serial.println(F("[MODEM] restarting ESP32 (battery-like reset)"));
+    SerialBT.println(F("[MODEM] restarting ESP32"));
+    Serial.flush();
+    delay(2000);
+    esp_restart();
   }
-
-  modem.configureNetwork(true);
-  Serial.println(F("[MODEM] power cycle done — waiting for CGREG"));
-  SerialBT.println(F("[MODEM] power cycle done — waiting for CGREG"));
-  return true;
+#endif
+  return ok;
 }
 
 static bool s_modemRecoverNextPowerCycle = false;
 
 void modemRecoverEscalated_f(const __FlashStringHelper *reason) {
-  if (!s_modemRecoverNextPowerCycle) {
-    if (modemHardRecover_f(reason)) {
-      s_modemRecoverNextPowerCycle = true;
-    }
-  } else if (modemPowerCycleRecover_f(reason)) {
+  // Battery disconnect resets modem power + UART + boot config. Try that first.
+  if (modemPowerCycleRecover_f(reason, false)) {
     s_modemRecoverNextPowerCycle = false;
+    return;
+  }
+  Serial.println(F("[MODEM] power cycle unavailable — trying RST recover"));
+  SerialBT.println(F("[MODEM] power cycle unavailable — trying RST recover"));
+  if (modemHardRecover_f(reason)) {
+    s_modemRecoverNextPowerCycle = true;
   }
 }
 
@@ -763,6 +822,22 @@ static void modemRecoverEscalationReset() {
 }
 
 static bool cgregRegistered(uint8_t n) { return n == 1 || n == 5; }
+
+static void modemRecoverEscalationMaybeReset(uint8_t cgregStat) {
+  static unsigned long registeredSinceMs = 0;
+
+  if (!cgregRegistered(cgregStat)) {
+    registeredSinceMs = 0;
+    return;
+  }
+  if (registeredSinceMs == 0) {
+    registeredSinceMs = millis();
+    return;
+  }
+  if (millis() - registeredSinceMs >= REGISTERED_STABLE_MS) {
+    modemRecoverEscalationReset();
+  }
+}
 
 static bool cellularLinkAlive() {
   return (ntripConnected &&
@@ -826,7 +901,7 @@ void network_status_check_f() {
   }
 
   if (n == 1 || n == 5) {
-    modemRecoverEscalationReset();
+    modemRecoverEscalationMaybeReset(n);
     if (!networkConnected) {
       networkConnected = true;
       Serial.println(F("[NET] connected"));
@@ -854,19 +929,30 @@ void network_status_check_f() {
   // monitor_connection_health() returns immediately when !networkConnected, so
   // a modem stuck at CSQ=0 / CGREG=0 would never reach hard-recover otherwise.
   static unsigned long unregisteredSinceMs = 0;
+  static unsigned long lastForcedFullCycleMs = 0;
   if (cgregRegistered(n)) {
     unregisteredSinceMs = 0;
   } else {
     if (unregisteredSinceMs == 0) {
       unregisteredSinceMs = millis();
     } else {
-      const unsigned long limit =
-          (n == 2 && rssi != 0 && rssi != 99)
-              ? UNREGISTERED_SEARCHING_GRACE_MS
-              : UNREGISTERED_HARD_RECOVER_MS;
-      if (millis() - unregisteredSinceMs >= limit) {
-        unregisteredSinceMs = 0;
-        modemRecoverEscalated_f(F("registration timeout"));
+      const unsigned long unregDuration = millis() - unregisteredSinceMs;
+      if (unregDuration >= MODEM_STUCK_FORCE_CYCLE_MS &&
+          millis() - lastForcedFullCycleMs >= MODEM_STUCK_FORCE_CYCLE_MS) {
+        lastForcedFullCycleMs = millis();
+        Serial.println(F("[MODEM] prolonged unregistered — forced power cycle"));
+        SerialBT.println(F("[MODEM] prolonged unregistered — forced power cycle"));
+        modemPowerCycleRecover_f(F("prolonged unregistered"), true);
+        unregisteredSinceMs = millis();
+      } else {
+        const unsigned long limit =
+            (n == 2 && rssi != 0 && rssi != 99)
+                ? UNREGISTERED_SEARCHING_GRACE_MS
+                : UNREGISTERED_HARD_RECOVER_MS;
+        if (unregDuration >= limit) {
+          unregisteredSinceMs = millis();
+          modemRecoverEscalated_f(F("registration timeout"));
+        }
       }
     }
   }

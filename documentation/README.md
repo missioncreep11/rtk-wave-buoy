@@ -18,6 +18,7 @@
 | [failure-paths.md](failure-paths.md) | Field / debug | RST → PWRKEY recovery, serial tags |
 | [deployment-checklist.md](deployment-checklist.md) | Deploy | Pre-float verification |
 | [legacy-vs-buoy-combo.md](legacy-vs-buoy-combo.md) | Reference | Do not flash WiFi legacy for LTE buoy |
+| [polaris-exploration.md](polaris-exploration.md) | RTK / casters | Point One Polaris trials, LTE notes, next steps |
 
 ## Elsewhere in the repo
 
@@ -36,4 +37,5 @@
 | Understand the system | [learning-path.md](learning-path.md) → [system-architecture.md](system-architecture.md) |
 | Wire the board | [hardware-spec.md](hardware-spec.md) → [wiring-and-pins.md](wiring-and-pins.md) |
 | Debug LTE / NTRIP | [failure-paths.md](failure-paths.md) → [at-command-primer.md](at-command-primer.md) |
+| Polaris / VRS on LTE | [polaris-exploration.md](polaris-exploration.md) → `esp32/legacy/esp32_polaris_wifi.ino` |
 | Process SD logs | [data-formats.md](data-formats.md) → [../Visualizer/README.md](../Visualizer/README.md) |
