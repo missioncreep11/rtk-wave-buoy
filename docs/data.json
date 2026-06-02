@@ -1,14 +1,14 @@
 {
   "device_id": "865235030714188",
-  "received": "2026-06-02 14:50:12 UTC",
-  "fix": 0,
-  "rtk": "none",
-  "sats": 0,
-  "lat": null,
-  "lon": null,
-  "alt_m": null,
-  "bus_v": 3.242,
-  "power_mw": 1090.8,
-  "rssi": 29,
-  "ntrip": 0
+  "received": "2026-06-02 14:58:46 UTC",
+  "fix": 3,
+  "rtk": "FIXED",
+  "sats": 21,
+  "lat": 32.8667734,
+  "lon": -117.2668872,
+  "alt_m": -1.12,
+  "bus_v": 3.266,
+  "power_mw": 767.4,
+  "rssi": 28,
+  "ntrip": 1
 }
