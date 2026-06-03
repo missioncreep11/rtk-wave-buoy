@@ -1,6 +1,6 @@
 # RTK Wave Buoy
 
-Centimeter-level RTK positioning for ocean wave and tide work, with onboard SD logging and live telemetry over LTE. Developed at UCSD Scripps Institution of Oceanography and the UC San Diego Department of Mechanical Engineering.
+Centimeter-level RTK positioning for ocean wave and tide observation, with onboard SD logging and live telemetry over LTE. Developed at UCSD Scripps Institution of Oceanography and the UC San Diego Department of Mechanical Engineering.
 
 **Documentation:** start with [`documentation/learning-path.md`](documentation/learning-path.md) and the [full index](documentation/README.md).
 
