@@ -1,14 +1,14 @@
 {
-  "device_id": "+CFUN: 1",
-  "received": "2026-06-03 12:44:18 UTC",
-  "fix": 0,
-  "rtk": "none",
-  "sats": 0,
-  "lat": null,
-  "lon": null,
-  "alt_m": null,
-  "bus_v": 3.269,
-  "power_mw": 742,
-  "rssi": 25,
-  "ntrip": 0
+  "device_id": "865235030714188",
+  "received": "2026-06-03 12:50:34 UTC",
+  "fix": 3,
+  "rtk": "FIXED",
+  "sats": 23,
+  "lat": 32.8667789,
+  "lon": -117.2669011,
+  "alt_m": -1.07,
+  "bus_v": 3.237,
+  "power_mw": 1134.3,
+  "rssi": 26,
+  "ntrip": 1
 }
