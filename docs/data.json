@@ -1,14 +1,14 @@
 {
   "device_id": "+CFUN: 1",
-  "received": "2026-06-03 09:45:17 UTC",
+  "received": "2026-06-03 09:46:18 UTC",
   "fix": 3,
   "rtk": "FIXED",
   "sats": 25,
-  "lat": 32.8667657,
-  "lon": -117.2668624,
-  "alt_m": -0.9,
-  "bus_v": 3.239,
-  "power_mw": 1154.2,
-  "rssi": 28,
+  "lat": 32.8667656,
+  "lon": -117.2668666,
+  "alt_m": -0.58,
+  "bus_v": 3.263,
+  "power_mw": 809.8,
+  "rssi": 25,
   "ntrip": 1
 }
