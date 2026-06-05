@@ -1,0 +1,5 @@
+*.ubx
+*.csv
+cache/
+# override root gitignore to allow notebooks here
+!*.ipynb
