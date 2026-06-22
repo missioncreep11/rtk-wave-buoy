@@ -80,11 +80,6 @@ The buoy operates across different spatial representations:
 - **Mean Sea Level (MSL):** To calculate true ocean wave height, the ellipsoidal height is corrected using a geoid model (e.g., EGM96). The geoid represents the shape the ocean surface would take under gravity and rotation alone.
 - **ENU (East, North, Up):** For local wave analysis, geodetic coordinates are converted to a local Cartesian system centered at the buoy's mean position. This allows plotting the buoy's motion as a simple $(X, Y, Z)$ trajectory in meters. The conversion uses the pyproj library in the visualizer scripts.
 
-### 2.3 Sensor Fusion: GNSS + IMU
-Wave motion is analyzed by combining two complementary data sources:
-- **GNSS (ZED-F9P):** Provides highly accurate absolute vertical position (cm-level with RTK fix) but at a lower sampling rate ($\sim 10$ Hz). It is used to track long-term tides and low-frequency wave components.
-- **IMU (ICM-20948):** Provides high-rate (up to $1$ kHz) acceleration data on three axes. It captures rapid wave dynamics and "chop" that the GNSS cannot resolve temporally. However, accelerometer data suffers from **drift** when double-integrated to position — small DC offsets accumulate into large position errors over time.
-- **Fusion Approach:** The accelerometer data is high-pass filtered (capturing wave-frequency motion) while the GNSS position is low-pass filtered (capturing tides and mean position). The two are complementary and recombined in the frequency domain.
 
 ---
 
