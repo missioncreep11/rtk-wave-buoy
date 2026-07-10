@@ -8,6 +8,29 @@
 #include <HardwareSerial.h>
 #include <Wire.h>
 #include <cstring>
+
+// BLE forward declarations (defined in buoy_combo.ino)
+void buoyPrint(const String& msg);
+void buoyPrintln(const String& msg);
+
+inline void buoyPrint(int v)                  { buoyPrint(String(v)); }
+inline void buoyPrint(unsigned int v)         { buoyPrint(String(v)); }
+inline void buoyPrint(long v)                 { buoyPrint(String(v)); }
+inline void buoyPrint(unsigned long v)        { buoyPrint(String(v)); }
+inline void buoyPrint(uint8_t v)              { buoyPrint(String((unsigned int)v)); }
+inline void buoyPrint(uint16_t v)             { buoyPrint(String((unsigned int)v)); }
+inline void buoyPrint(float v, int p = 2)     { buoyPrint(String(v, p)); }
+inline void buoyPrint(double v, int p = 2)    { buoyPrint(String(v, p)); }
+
+inline void buoyPrintln(int v)                { buoyPrintln(String(v)); }
+inline void buoyPrintln(unsigned int v)       { buoyPrintln(String(v)); }
+inline void buoyPrintln(long v)               { buoyPrintln(String(v)); }
+inline void buoyPrintln(unsigned long v)      { buoyPrintln(String(v)); }
+inline void buoyPrintln(uint8_t v)            { buoyPrintln(String((unsigned int)v)); }
+inline void buoyPrintln(uint16_t v)           { buoyPrintln(String((unsigned int)v)); }
+inline void buoyPrintln(float v, int p = 2)   { buoyPrint(String(v, p)); }
+inline void buoyPrintln(double v, int p = 2)  { buoyPrint(String(v, p)); }
+extern bool bleConnected;
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_system.h>
 #endif
@@ -176,8 +199,7 @@ public:
       delay(2000);
       return true;
     }
-    Serial.println(F("[MODEM] CFUN=1 failed"));
-    SerialBT.println(F("[MODEM] CFUN=1 failed"));
+    buoyPrintln("[MODEM] CFUN=1 failed");
     return false;
   }
 
@@ -189,13 +211,11 @@ public:
   bool applyLteCatMBandSettings() {
     bool ok = true;
     if (!setPreferredMode(38)) {
-      Serial.println(F("[MODEM] setPreferredMode(38) failed"));
-      SerialBT.println(F("[MODEM] setPreferredMode(38) failed"));
+      buoyPrintln("[MODEM] setPreferredMode(38) failed");
       ok = false;
     }
     if (!setPreferredLTEMode(1)) {
-      Serial.println(F("[MODEM] setPreferredLTEMode(1) failed"));
-      SerialBT.println(F("[MODEM] setPreferredLTEMode(1) failed"));
+      buoyPrintln("[MODEM] setPreferredLTEMode(1) failed");
       ok = false;
     }
 
@@ -205,7 +225,7 @@ public:
       Serial.print(F("[MODEM] CBANDCFG band "));
       Serial.print(LTE_CATM_BAND);
       Serial.println(F(" failed — trying US 2,4,12,13"));
-      SerialBT.println(F("[MODEM] CBANDCFG fallback 2,4,12,13"));
+      buoyPrintln("[MODEM] CBANDCFG fallback 2,4,12,13");
       if (!sendCheckReply(LTE_CATM_US_FALLBACK, ok_reply, 8000)) {
         ok = false;
       }
@@ -214,10 +234,8 @@ public:
     sendCheckReply(F("AT+CGREG=2"), ok_reply, 3000);
 
     getReply(F("AT+CBANDCFG?"), (uint16_t)3000);
-    Serial.print(F("[MODEM] CBANDCFG: "));
-    Serial.println(replybuffer);
-    SerialBT.print(F("[MODEM] CBANDCFG: "));
-    SerialBT.println(replybuffer);
+    buoyPrint("[MODEM] CBANDCFG: ");
+    buoyPrintln(replybuffer);
 
     return ok;
   }
@@ -230,17 +248,14 @@ public:
 
     if (!simPinReady()) {
       getReply(F("AT+CPIN?"), (uint16_t)3000);
-      Serial.print(F("[MODEM] SKIP band config — CPIN: "));
-      Serial.println(replybuffer);
-      SerialBT.print(F("[MODEM] SKIP band config — CPIN: "));
-      SerialBT.println(replybuffer);
+      buoyPrint("[MODEM] SKIP band config — CPIN: ");
+      buoyPrintln(replybuffer);
       return false;
     }
 
     if (afterRecover) {
       if (!sendCheckReply(F("AT+CFUN=0"), ok_reply, 10000) && !cfunIs0()) {
-        Serial.println(F("[MODEM] CFUN=0 failed (recover band config)"));
-        SerialBT.println(F("[MODEM] CFUN=0 failed (recover band config)"));
+        buoyPrintln("[MODEM] CFUN=0 failed (recover band config)");
         ensureCfun1();
         return false;
       }
@@ -261,8 +276,7 @@ public:
 
   void configureNetwork(bool afterRecover = false) {
     if (!waitModemAtReady()) {
-      Serial.println(F("[MODEM] WARN: modem not AT-ready before config"));
-      SerialBT.println(F("[MODEM] WARN: modem not AT-ready before config"));
+      buoyPrintln("[MODEM] WARN: modem not AT-ready before config");
     }
 
     if (!afterRecover) {
@@ -273,8 +287,7 @@ public:
     setNetworkSettings(F("hologram"));
 
     if (!configureLteCatM(afterRecover)) {
-      Serial.println(F("[MODEM] WARN: LTE CAT-M band config failed"));
-      SerialBT.println(F("[MODEM] WARN: LTE CAT-M band config failed"));
+      buoyPrintln("[MODEM] WARN: LTE CAT-M band config failed");
     }
 
     ensureCfun1();
@@ -284,8 +297,7 @@ public:
     sendCheckReply(F("AT+CMEE=2"), ok_reply, 3000);
     sendCheckReply(F("AT+CDNSCFG=1,\"8.8.8.8\",\"1.1.1.1\""), ok_reply, 5000);
 
-    Serial.println(F("[MODEM] post-config diagnostics:"));
-    SerialBT.println(F("[MODEM] post-config diagnostics:"));
+    buoyPrintln("[MODEM] post-config diagnostics:");
     printDiagnostics();
   }
 
@@ -503,46 +515,33 @@ bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
 }
 
 void initialize_gnss_uart_f() {
-  Serial.println(F("=== Initializing ZED-F9P via UART ==="));
-  SerialBT.println(F("=== Initializing ZED-F9P via UART ==="));
-  Serial.print(F("TX_GPS pin: "));
-  SerialBT.print(F("TX_GPS pin: "));
-  Serial.println(TX_GPS);
-  SerialBT.println(TX_GPS);
-  Serial.print(F("RX_GPS pin: "));
-  SerialBT.print(F("RX_GPS pin: "));
-  Serial.println(RX_GPS);
-  SerialBT.println(RX_GPS);
+  buoyPrintln("=== Initializing ZED-F9P via UART ===");
+  buoyPrint("TX_GPS pin: ");
+  buoyPrintln(TX_GPS);
+  buoyPrint("RX_GPS pin: ");
+  buoyPrintln(RX_GPS);
   
   const long baudRates[] = {115200, 115200, 115200, 115200, 115200};
   const int numRates = 5;
   
   for (int i = 0; i < numRates; i++) {
-    Serial.print(F("Trying "));
-    SerialBT.print(F("Trying "));
-    Serial.print(baudRates[i]);
-    SerialBT.print(baudRates[i]);
-    Serial.println(F(" baud..."));
-    SerialBT.println(F(" baud..."));
+    buoyPrint("Trying ");
+    buoyPrint(baudRates[i]);
+    buoyPrintln(" baud...");
     
     gpsSerial.begin(baudRates[i], SERIAL_8N1, RX_GPS, TX_GPS);
     delay(1000);  // Give more time
     
     // Try to get any response
-    Serial.println(F("  Attempting myGNSS.begin()..."));
-    SerialBT.println(F("  Attempting myGNSS.begin()..."));
+    buoyPrintln("  Attempting myGNSS.begin()...");
     
     if (myGNSS.begin(gpsSerial)) {
-      Serial.print(F("SUCCESS at "));
-      SerialBT.print(F("SUCCESS at "));
-      Serial.print(baudRates[i]);
-      SerialBT.print(baudRates[i]);
-      Serial.println(F(" baud!"));
-      SerialBT.println(F(" baud!"));
+      buoyPrint("SUCCESS at ");
+      buoyPrint(baudRates[i]);
+      buoyPrintln(" baud!");
       gpsUARTOnline = true;
       
-      Serial.println(F("GPS UART connected!"));
-      SerialBT.println(F("GPS UART connected!"));
+      buoyPrintln("GPS UART connected!");
 
       // Configure the UART we're talking to: accept RTCM3 in, send UBX out
       myGNSS.setPortInput(COM_PORT_UART1, COM_TYPE_UBX | COM_TYPE_NMEA | COM_TYPE_RTCM3);
@@ -550,40 +549,34 @@ void initialize_gnss_uart_f() {
       // Persist to flash so future boots don't depend on this reconfigure
       myGNSS.saveConfiguration();
 
-      Serial.println(F("ZED-F9P: RTCM3 input enabled on UART1"));
-      SerialBT.println(F("ZED-F9P: RTCM3 input enabled on UART1"));
+      buoyPrintln("ZED-F9P: RTCM3 input enabled on UART1");
       return;
       
     } else {
       Serial.println(F("  Failed"));
-      SerialBT.println(F("GPS UART connected!"));
     }
     
     gpsSerial.end();
     delay(100);
   }
   
-  Serial.println(F("ERROR: GPS UART failed at all baud rates!"));
-  SerialBT.println(F("ERROR: GPS UART failed at all baud rates!"));
+  buoyPrintln("ERROR: GPS UART failed at all baud rates!");
   gpsUARTOnline = false;
 }
 
 void initialize_ina228_f() {
-  Serial.println(F("=== Initializing INA228 (I2C) ==="));
-  SerialBT.println(F("=== Initializing INA228 (I2C) ==="));
+  buoyPrintln("=== Initializing INA228 (I2C) ===");
   Wire.begin(I2C_SDA, I2C_SCL);
 
   if (!ina228.begin()) {
-    Serial.println(F("INA228 not found — power logging disabled"));
-    SerialBT.println(F("INA228 not found — power logging disabled"));
+    buoyPrintln("INA228 not found — power logging disabled");
     ina228Online = false;
     return;
   }
 
   ina228.setShunt(0.015, 10.0);  // Adafruit breakout: 15 mΩ, 10 A max
   ina228Online = true;
-  Serial.println(F("INA228 OK"));
-  SerialBT.println(F("INA228 OK"));
+  buoyPrintln("INA228 OK");
 }
 
 void print_power_status_f() {
@@ -596,8 +589,7 @@ void print_power_status_f() {
   float powerMw = ina228.getPower_mW();
 
   if (busV < 0.5f) {
-    Serial.println(F("[PWR] (bench/USB — INA228 not on active battery rail)"));
-    SerialBT.println(F("[PWR] (bench/USB — INA228 not on active battery rail)"));
+    buoyPrintln("[PWR] (bench/USB — INA228 not on active battery rail)");
     return;
   }
 
@@ -609,13 +601,13 @@ void print_power_status_f() {
   Serial.print(powerMw, 1);
   Serial.println(F(" mW"));
 
-  SerialBT.print(F("[PWR] I="));
-  SerialBT.print(currentMa, 2);
-  SerialBT.print(F(" mA  V="));
-  SerialBT.print(busV, 3);
-  SerialBT.print(F(" V  P="));
-  SerialBT.print(powerMw, 1);
-  SerialBT.println(F(" mW"));
+  buoyPrint("[PWR] I=");
+  buoyPrint(currentMa, 2);
+  buoyPrint(" mA  V=");
+  buoyPrint(busV, 3);
+  buoyPrint(" V  P=");
+  buoyPrint(powerMw, 1);
+  buoyPrintln(" mW");
 }
 
 
@@ -623,10 +615,8 @@ static void ntripAttemptFailed() {
   if (consecutiveNtripFailures < 255) {
     consecutiveNtripFailures++;
   }
-  Serial.print(F("[NTRIP] fail streak="));
-  Serial.println(consecutiveNtripFailures);
-  SerialBT.print(F("[NTRIP] fail streak="));
-  SerialBT.println(consecutiveNtripFailures);
+  buoyPrint("[NTRIP] fail streak=");
+  buoyPrintln(consecutiveNtripFailures);
 }
 
 void noteCellularActivity() {
@@ -634,10 +624,8 @@ void noteCellularActivity() {
 }
 
 void invalidateDataPath(const __FlashStringHelper *reason) {
-  Serial.print(F("[DATA] invalidate: "));
-  Serial.println(reason);
-  SerialBT.print(F("[DATA] invalidate: "));
-  SerialBT.println(reason);
+  buoyPrint("[DATA] invalidate: ");
+  buoyPrintln(reason);
 
   if (ntripConnected) {
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
@@ -655,16 +643,13 @@ void refreshGprs_f(const __FlashStringHelper *reason) {
   static unsigned long lastRefreshMs = 0;
 
   if (millis() - lastRefreshMs < GPRS_REFRESH_COOLDOWN_MS) {
-    Serial.println(F("[GPRS] refresh skipped (cooldown)"));
-    SerialBT.println(F("[GPRS] refresh skipped (cooldown)"));
+    buoyPrintln("[GPRS] refresh skipped (cooldown)");
     return;
   }
   lastRefreshMs = millis();
 
-  Serial.print(F("[GPRS] refresh: "));
-  Serial.println(reason);
-  SerialBT.print(F("[GPRS] refresh: "));
-  SerialBT.println(reason);
+  buoyPrint("[GPRS] refresh: ");
+  buoyPrintln(reason);
 
   invalidateDataPath(reason);
 }
@@ -713,16 +698,13 @@ bool modemHardRecover_f(const __FlashStringHelper *reason) {
   static unsigned long lastHardMs = 0;
 
   if (millis() - lastHardMs < MODEM_HARD_RECOVER_COOLDOWN_MS) {
-    Serial.println(F("[MODEM] hard recover skipped (cooldown)"));
-    SerialBT.println(F("[MODEM] hard recover skipped (cooldown)"));
+    buoyPrintln("[MODEM] hard recover skipped (cooldown)");
     return false;
   }
   lastHardMs = millis();
 
-  Serial.print(F("[MODEM] hard recover: "));
-  Serial.println(reason);
-  SerialBT.print(F("[MODEM] hard recover: "));
-  SerialBT.println(reason);
+  buoyPrint("[MODEM] hard recover: ");
+  buoyPrintln(reason);
 
   invalidateDataPath(reason);
   networkConnected = false;
@@ -737,11 +719,10 @@ bool modemHardRecover_f(const __FlashStringHelper *reason) {
   digitalWrite(MODEM_RST_PIN, HIGH);
   delay(MODEM_POST_RST_MS);
 
-  if (modemColdBootSequence()) {
-    Serial.println(F("[MODEM] hard recover done — waiting for CGREG"));
-    SerialBT.println(F("[MODEM] hard recover done — waiting for CGREG"));
-    return true;
-  }
+  modem.configureNetwork(true);
+  buoyPrintln("[MODEM] hard recover done — waiting for CGREG");
+  return true;
+}
 
   Serial.println(F("[MODEM] hard recover config failed — full power cycle"));
   SerialBT.println(F("[MODEM] hard recover config failed — full power cycle"));
@@ -752,18 +733,14 @@ bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
                               bool bypassCooldown) {
   static unsigned long lastPowerCycleMs = 0;
 
-  if (!bypassCooldown &&
-      millis() - lastPowerCycleMs < MODEM_POWER_CYCLE_COOLDOWN_MS) {
-    Serial.println(F("[MODEM] power cycle skipped (cooldown)"));
-    SerialBT.println(F("[MODEM] power cycle skipped (cooldown)"));
+  if (millis() - lastPowerCycleMs < MODEM_POWER_CYCLE_COOLDOWN_MS) {
+    buoyPrintln("[MODEM] power cycle skipped (cooldown)");
     return false;
   }
   lastPowerCycleMs = millis();
 
-  Serial.print(F("[MODEM] power cycle: "));
-  Serial.println(reason);
-  SerialBT.print(F("[MODEM] power cycle: "));
-  SerialBT.println(reason);
+  buoyPrint("[MODEM] power cycle: ");
+  buoyPrintln(reason);
 
   invalidateDataPath(reason);
   networkConnected = false;
@@ -778,28 +755,20 @@ bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
   SerialBT.println(F("[MODEM] modem off — settling"));
   delay(MODEM_FULL_POWER_OFF_SETTLE_MS);
 
-  Serial.println(F("[MODEM] PWRKEY power on..."));
-  SerialBT.println(F("[MODEM] PWRKEY power on..."));
+  buoyPrintln("[MODEM] PWRKEY power on...");
   pinMode(MODEM_RST_PIN, OUTPUT);
   digitalWrite(MODEM_RST_PIN, HIGH);
   modem.powerOn(BOTLETICS_PWRKEY);
-  delay(MODEM_BOOT_POWER_ON_MS);
+  delay(MODEM_POST_POWER_ON_MS);
 
-  const bool ok = modemColdBootSequence();
-  Serial.println(ok ? F("[MODEM] power cycle done — waiting for CGREG")
-                  : F("[MODEM] power cycle done (config failed)"));
-  SerialBT.println(ok ? F("[MODEM] power cycle done — waiting for CGREG")
-                    : F("[MODEM] power cycle done (config failed)"));
-#if defined(ARDUINO_ARCH_ESP32)
-  if (!ok) {
-    Serial.println(F("[MODEM] restarting ESP32 (battery-like reset)"));
-    SerialBT.println(F("[MODEM] restarting ESP32"));
-    Serial.flush();
-    delay(2000);
-    esp_restart();
+  if (!modemLinkBegin()) {
+    buoyPrintln("[MODEM] begin failed after power cycle");
+    return false;
   }
-#endif
-  return ok;
+
+  modem.configureNetwork(true);
+  buoyPrintln("[MODEM] power cycle done — waiting for CGREG");
+  return true;
 }
 
 static bool s_modemRecoverNextPowerCycle = false;
@@ -880,20 +849,13 @@ void network_status_check_f() {
       (n == 3) ? F("denied") :
                  F("not registered");
 
-  Serial.print(F("[NET] CSQ="));
-  Serial.print(rssi);
-  Serial.print(F(" CGREG="));
-  Serial.print(n);
-  Serial.print(F(" ("));
-  Serial.print(label);
-  Serial.println(F(")"));
-  SerialBT.print(F("[NET] CSQ="));
-  SerialBT.print(rssi);
-  SerialBT.print(F(" CGREG="));
-  SerialBT.print(n);
-  SerialBT.print(F(" ("));
-  SerialBT.print(label);
-  SerialBT.println(F(")"));
+  buoyPrint("[NET] CSQ=");
+  buoyPrint(rssi);
+  buoyPrint(" CGREG=");
+  buoyPrint(n);
+  buoyPrint(" (");
+  buoyPrint(label);
+  buoyPrintln(")");
 
   if (n == 0 && millis() - lastDiagMs > 30000) {
     lastDiagMs = millis();
@@ -904,23 +866,18 @@ void network_status_check_f() {
     modemRecoverEscalationMaybeReset(n);
     if (!networkConnected) {
       networkConnected = true;
-      Serial.println(F("[NET] connected"));
-      SerialBT.println(F("[NET] connected"));
+      buoyPrintln("[NET] connected");
     }
   } else if (networkConnected) {
     if (cellularLinkAlive()) {
       if (millis() - lastCgregIgnoreLogMs > 60000) {
         lastCgregIgnoreLogMs = millis();
-        Serial.print(F("[NET] CGREG="));
-        Serial.print(n);
-        Serial.println(F(" (ignored, RTCM active)"));
-        SerialBT.print(F("[NET] CGREG="));
-        SerialBT.print(n);
-        SerialBT.println(F(" (ignored, RTCM active)"));
+        buoyPrint("[NET] CGREG=");
+        buoyPrint(n);
+        buoyPrintln(" (ignored, RTCM active)");
       }
     } else if (cgregLossConfirmed(n)) {
-      Serial.println(F("[NET] registration lost"));
-      SerialBT.println(F("[NET] registration lost"));
+      buoyPrintln("[NET] registration lost");
       invalidateDataPath(F("CGREG lost"));
       networkConnected = false;
     }
@@ -1071,8 +1028,7 @@ void post_telemetry_f() {
 
   Serial.println(F("[TELEM] Hologram cloud..."));
   bool ok = modem.sendHologramCloudMessage(msg, (uint16_t)n);
-  Serial.println(ok ? F("[TELEM] Hologram OK") : F("[TELEM] Hologram failed"));
-  SerialBT.println(ok ? F("[TELEM] Hologram OK") : F("[TELEM] Hologram failed"));
+  buoyPrintln(ok ? "[TELEM] Hologram OK" : "[TELEM] Hologram failed");
   if (ok) {
     noteCellularActivity();
   }
@@ -1106,30 +1062,24 @@ void enable_gprs_f() {
       lastGprsEnabled_ms = millis();
       noteCellularActivity();
       consecutiveNtripFailures = 0;
-      Serial.println(F("[GPRS] enabled"));
-      SerialBT.println(F("[GPRS] enabled"));
+      buoyPrintln("[GPRS] enabled");
       delay(2000);
       return;
     }
-    Serial.print(F("[GPRS] attempt "));    Serial.print(attempt);    Serial.println(F("/3 failed"));
-    SerialBT.print(F("[GPRS] attempt "));  SerialBT.print(attempt);  SerialBT.println(F("/3 failed"));
+    buoyPrint("[GPRS] attempt "); buoyPrint(attempt); buoyPrintln("/3 failed");
     if (attempt < 3) delay(attempt * 5000);  // 5s, 10s
   }
 
-  Serial.println(F("[GPRS] all attempts failed"));
-  SerialBT.println(F("[GPRS] all attempts failed"));
+  buoyPrintln("[GPRS] all attempts failed");
   delay(10000);
 }
 
 void beginNTRIPClient() {
-  Serial.print(F("[NTRIP] connecting to "));    Serial.print(casterHost);
-  Serial.print(F(":"));                          Serial.println(casterPort);
-  SerialBT.print(F("[NTRIP] connecting to "));  SerialBT.print(casterHost);
-  SerialBT.print(F(":"));                        SerialBT.println(casterPort);
+  buoyPrint("[NTRIP] connecting to "); buoyPrint(casterHost);
+  buoyPrint(":"); buoyPrintln(casterPort);
 
   if (!modem.tcpConnectPlain(casterHost, casterPort)) {
-    Serial.println(F("[NTRIP] TCP connect failed"));
-    SerialBT.println(F("[NTRIP] TCP connect failed"));
+    buoyPrintln("[NTRIP] TCP connect failed");
     ntripAttemptFailed();
     return;
   }
@@ -1148,8 +1098,7 @@ void beginNTRIPClient() {
   ntripRequest += "\r\n";
 
   if (!modem.tcpSendPlain(ntripRequest.c_str(), ntripRequest.length())) {
-    Serial.println(F("[NTRIP] send failed"));
-    SerialBT.println(F("[NTRIP] send failed"));
+    buoyPrintln("[NTRIP] send failed");
     ntripAttemptFailed();
     return;
   }
@@ -1158,8 +1107,7 @@ void beginNTRIPClient() {
 
   uint16_t available = modem.TCPavailable();
   if (available == 0) {
-    Serial.println(F("[NTRIP] no response from caster"));
-    SerialBT.println(F("[NTRIP] no response from caster"));
+    buoyPrintln("[NTRIP] no response from caster");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
     ntripAttemptFailed();
     return;
@@ -1174,8 +1122,7 @@ void beginNTRIPClient() {
     bytesRead = modem.TCPread(responseBuffer, bytesToRead);
   }
   if (bytesRead == 0) {
-    Serial.println(F("[NTRIP] empty read"));
-    SerialBT.println(F("[NTRIP] empty read"));
+    buoyPrintln("[NTRIP] empty read");
     ntripAttemptFailed();
     return;
   }
@@ -1189,25 +1136,21 @@ void beginNTRIPClient() {
   bool notfound = strstr(rb, " 404") != nullptr;
 
   if (ok) {
-    Serial.println(F("[NTRIP] connected"));
-    SerialBT.println(F("[NTRIP] connected"));
+    buoyPrintln("[NTRIP] connected");
     ntripConnected = true;
     consecutiveNtripFailures = 0;
     lastReceivedRTCM_ms = millis();
     noteCellularActivity();
   } else if (unauth) {
-    Serial.println(F("[NTRIP] 401 unauthorized"));
-    SerialBT.println(F("[NTRIP] 401 unauthorized"));
+    buoyPrintln("[NTRIP] 401 unauthorized");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
     ntripAttemptFailed();
   } else if (notfound) {
-    Serial.println(F("[NTRIP] 404 mount not found"));
-    SerialBT.println(F("[NTRIP] 404 mount not found"));
+    buoyPrintln("[NTRIP] 404 mount not found");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
     ntripAttemptFailed();
   } else {
-    Serial.println(F("[NTRIP] unrecognized response"));
-    SerialBT.println(F("[NTRIP] unrecognized response"));
+    buoyPrintln("[NTRIP] unrecognized response");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
     ntripAttemptFailed();
   }
@@ -1220,8 +1163,7 @@ void handleNTRIPData() {
 
   if (available == 0) {
     if (millis() - lastReceivedRTCM_ms > maxTimeBeforeHangup_ms) {
-      Serial.println(F("[NTRIP] RTCM timeout, disconnecting"));
-      SerialBT.println(F("[NTRIP] RTCM timeout, disconnecting"));
+      buoyPrintln("[NTRIP] RTCM timeout, disconnecting");
       modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
       ntripConnected = false;
       ntripAttemptFailed();
@@ -1255,10 +1197,8 @@ void handleNTRIPData() {
   bytesSinceReport += totalSent;
   if (millis() - lastRtcmReport > 10000) {
     lastRtcmReport = millis();
-    Serial.print(F("[RTCM] "));    Serial.print(bytesSinceReport);
-    Serial.print(F(" B/10s backlog=")); Serial.println(modem.TCPavailable());
-    SerialBT.print(F("[RTCM] "));  SerialBT.print(bytesSinceReport);
-    SerialBT.print(F(" B/10s backlog=")); SerialBT.println(modem.TCPavailable());
+    buoyPrint("[RTCM] "); buoyPrint(bytesSinceReport);
+    buoyPrint(" B/10s backlog="); buoyPrintln(modem.TCPavailable());
     bytesSinceReport = 0;
   }
 }
@@ -1272,32 +1212,23 @@ void monitor_connection_health() {
 
   uint8_t status = modem.getNetworkStatus();
   uint8_t rssi   = modem.getRSSI();
-  Serial.print(F("[HEALTH] net="));    Serial.print(status);
-  Serial.print(F(" rssi="));            Serial.print(rssi);
-  Serial.print(F(" gprs="));            Serial.print(gprsEnabled ? 1 : 0);
-  Serial.print(F(" ntrip="));           Serial.print(ntripConnected ? 1 : 0);
-  Serial.print(F(" fail="));            Serial.println(consecutiveNtripFailures);
-  SerialBT.print(F("[HEALTH] net="));  SerialBT.print(status);
-  SerialBT.print(F(" rssi="));          SerialBT.print(rssi);
-  SerialBT.print(F(" gprs="));          SerialBT.print(gprsEnabled ? 1 : 0);
-  SerialBT.print(F(" ntrip="));         SerialBT.print(ntripConnected ? 1 : 0);
-  SerialBT.print(F(" fail="));          SerialBT.println(consecutiveNtripFailures);
+  buoyPrint("[HEALTH] net="); buoyPrint(status);
+  buoyPrint(" rssi="); buoyPrint(rssi);
+  buoyPrint(" gprs="); buoyPrint(gprsEnabled ? 1 : 0);
+  buoyPrint(" ntrip="); buoyPrint(ntripConnected ? 1 : 0);
+  buoyPrint(" fail="); buoyPrintln(consecutiveNtripFailures);
 
   if (!cgregRegistered(status)) {
     if (cellularLinkAlive()) {
       static unsigned long lastIgnoreLogMs = 0;
       if (millis() - lastIgnoreLogMs > 60000) {
         lastIgnoreLogMs = millis();
-        Serial.print(F("[HEALTH] CGREG="));
-        Serial.print(status);
-        Serial.println(F(" ignored (RTCM active)"));
-        SerialBT.print(F("[HEALTH] CGREG="));
-        SerialBT.print(status);
-        SerialBT.println(F(" ignored (RTCM active)"));
+        buoyPrint("[HEALTH] CGREG=");
+        buoyPrint(status);
+        buoyPrintln(" ignored (RTCM active)");
       }
     } else if (cgregLossConfirmed(status)) {
-      Serial.println(F("[HEALTH] network lost"));
-      SerialBT.println(F("[HEALTH] network lost"));
+      buoyPrintln("[HEALTH] network lost");
       invalidateDataPath(F("CGREG health"));
       networkConnected = false;
       return;
@@ -1338,38 +1269,22 @@ void monitor_connection_health() {
 
 // DEBUG help
 void printDebugStatus() {
-  Serial.println(F("=== DEBUG STATUS ==="));
-  SerialBT.println(F("=== DEBUG STATUS ==="));
-  Serial.print(F("networkConnected = "));
-  SerialBT.print(F("networkConnected = "));
-  Serial.println(networkConnected ? "true" : "false");
-  SerialBT.println(networkConnected ? "true" : "false");
-  Serial.print(F("gprsEnabled = "));
-  SerialBT.print(F("gprsEnabled = "));
-  Serial.println(gprsEnabled ? "true" : "false");
-  SerialBT.println(gprsEnabled ? "true" : "false");
-  Serial.print(F("gpsEnabled = "));
-  SerialBT.print(F("gpsEnabled = "));
-  Serial.println(gpsEnabled ? "true" : "false");
-  SerialBT.println(gpsEnabled ? "true" : "false");
-  Serial.print(F("ntripConnected = "));
-  SerialBT.print(F("ntripConnected = "));
-  Serial.println(ntripConnected ? "true" : "false");
-  SerialBT.println(ntripConnected ? "true" : "false");
-  Serial.print(F("lastNTRIPAttempt = "));
-  SerialBT.print(F("lastNTRIPAttempt = "));
-  Serial.println(lastNTRIPAttempt);
-  SerialBT.println(lastNTRIPAttempt);
-  Serial.print(F("millis() = "));
-  SerialBT.print(F("millis() = "));
-  Serial.println(millis());
-  SerialBT.println(millis());
-  Serial.print(F("Time since last attempt = "));
-  SerialBT.print(F("Time since last attempt = "));
-  Serial.println(millis() - lastNTRIPAttempt);
-  SerialBT.println(millis() - lastNTRIPAttempt);
-  Serial.println(F("=== END DEBUG STATUS ==="));
-  SerialBT.println(F("=== END DEBUG STATUS ==="));
+  buoyPrintln("=== DEBUG STATUS ===");
+  buoyPrint("networkConnected = ");
+  buoyPrintln(networkConnected ? "true" : "false");
+  buoyPrint("gprsEnabled = ");
+  buoyPrintln(gprsEnabled ? "true" : "false");
+  buoyPrint("gpsEnabled = ");
+  buoyPrintln(gpsEnabled ? "true" : "false");
+  buoyPrint("ntripConnected = ");
+  buoyPrintln(ntripConnected ? "true" : "false");
+  buoyPrint("lastNTRIPAttempt = ");
+  buoyPrintln(lastNTRIPAttempt);
+  buoyPrint("millis() = ");
+  buoyPrintln(millis());
+  buoyPrint("Time since last attempt = ");
+  buoyPrintln(millis() - lastNTRIPAttempt);
+  buoyPrintln("=== END DEBUG STATUS ===");
 }
 
 void updateStatusLED() {
@@ -1387,8 +1302,7 @@ void IRAM_ATTR shutdownISR() {
 }
 
 void gracefulShutdown() {
-  Serial.println(F("\n=== SHUTDOWN REQUESTED ==="));
-  SerialBT.println(F("\n=== SHUTDOWN REQUESTED ==="));
+  buoyPrintln("\n=== SHUTDOWN REQUESTED ===");
   
   // Blink LED 3 times to confirm shutdown
   for (int i = 0; i < 3; i++) {
@@ -1400,8 +1314,7 @@ void gracefulShutdown() {
   
   // Close NTRIP/TCP connection
   if (ntripConnected) {
-    Serial.println(F("Closing NTRIP connection..."));
-    SerialBT.println(F("Closing NTRIP connection..."));
+    buoyPrintln("Closing NTRIP connection...");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
     ntripConnected = false;
     delay(1000);
@@ -1409,16 +1322,14 @@ void gracefulShutdown() {
   
   // Disable GPRS
   if (gprsEnabled) {
-    Serial.println(F("Disabling GPRS..."));
-    SerialBT.println(F("Disabling GPRS..."));
+    buoyPrintln("Disabling GPRS...");
     modem.enableGPRS(false);
     gprsEnabled = false;
     delay(1000);
   }
   
   // Power down modem
-  Serial.println(F("Powering down modem..."));
-  SerialBT.println(F("Powering down modem..."));
+  buoyPrintln("Powering down modem...");
   modem.sendCheckReply(F("AT+CPOWD=1"), F("NORMAL POWER DOWN"), 5000);
   delay(2000);
   
@@ -1426,10 +1337,8 @@ void gracefulShutdown() {
   digitalWrite(STATUS_LED, LOW);
   
   // Configure wake-up source
-  Serial.println(F("Entering deep sleep..."));
-  SerialBT.println(F("Entering deep sleep..."));
-  Serial.println(F("Press button again to wake up."));
-  SerialBT.println(F("Press button again to wake up."));
+  buoyPrintln("Entering deep sleep...");
+  buoyPrintln("Press button again to wake up.");
   Serial.flush();  // Make sure message prints before sleep
   
   // Configure pin 0 to wake on LOW (button pressed)

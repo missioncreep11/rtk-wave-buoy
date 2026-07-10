@@ -14,22 +14,44 @@
 #include <Base64.h>
 #endif
 #include <Arduino.h>
-#include "BluetoothSerial.h"
 
-// Check if Bluetooth is available
-#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
-#endif
+// BLE - Nordic UART Service (NUS), compatible with nRF Connect
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include "esp_mac.h"
 
-// Check Serial Port Profile
-#if !defined(CONFIG_BT_SPP_ENABLED)
-#error Serial Port Profile for Bluetooth is not available or not enabled. It is only available for the ESP32 chip.
-#endif
+#define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_CHAR_RX_UUID  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // phone -> buoy
+#define BLE_CHAR_TX_UUID  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // buoy -> phone
 
-BluetoothSerial SerialBT;
+BLEServer* pServer = NULL;
+BLECharacteristic* pTxChar = NULL;
+bool bleConnected = false;
+char bleRxBuf[256] = {0};
+volatile bool bleDataReady = false;
 
 #include "secrets.h"
 #include "buoy_combo.h"
+
+// BLE output helpers — echo to Serial and BLE simultaneously
+void buoyPrint(const String& msg) {
+  Serial.print(msg);
+  if (bleConnected && pTxChar != NULL) {
+    int len = msg.length();
+    int offset = 0;
+    while (offset < len) {
+      int chunkSize = min(20, len - offset);
+      String chunk = msg.substring(offset, offset + chunkSize);
+      pTxChar->setValue(chunk.c_str());
+      pTxChar->notify();
+      offset += chunkSize;
+      delay(10);
+    }
+  }
+}
+void buoyPrintln(const String& msg) { buoyPrint(msg + "\n"); }
 
 #if !defined(HAS_HOLOGRAM_DEVICE_KEY)
 const char hologramDeviceKey[] = "";
@@ -77,20 +99,136 @@ uint8_t type;
 char replybuffer[255];
 char imei[16] = {0};
 
-// Bluetooth Name
-String device_name = "RTK-GPS-BT";
+// ============================================================
+// BLE server callbacks
+// ============================================================
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    bleConnected = true;
+    buoyPrintln("BLE connected. Commands: STATUS GPS RESET SLEEP");
+  }
+  void onDisconnect(BLEServer* pServer) {
+    bleConnected = false;
+    Serial.println(F("BLE disconnected - restarting advertising"));
+    pServer->startAdvertising();
+  }
+};
+
+class RxCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pChar) {
+    strncpy(bleRxBuf, pChar->getValue().c_str(), sizeof(bleRxBuf) - 1);
+    bleRxBuf[sizeof(bleRxBuf) - 1] = '\0';
+    bleDataReady = true;
+  }
+};
+
+// ============================================================
+// BLE command handler (buoy_combo variant — no WiFi, no GET/SET)
+// ============================================================
+void handleBLECommand(String cmd) {
+  cmd.trim();
+  if (cmd.length() == 0) return;
+
+  String cmdUpper = cmd;
+  cmdUpper.toUpperCase();
+
+  // --- STATUS ---
+  if (cmdUpper == "STATUS") {
+    buoyPrintln("=== STATUS ===");
+    buoyPrintln("Network: " + String(networkConnected ? "connected" : "disconnected"));
+    buoyPrintln("GPRS: "    + String(gprsEnabled    ? "enabled"  : "disabled"));
+    buoyPrintln("NTRIP: "   + String(ntripConnected ? "connected" : "disconnected"));
+    buoyPrintln("GPS: "     + String(gpsUARTOnline  ? "online"   : "offline"));
+    buoyPrintln("INA228: "  + String(ina228Online   ? "online"   : "offline"));
+    buoyPrintln("==============");
+
+  // --- GPS ---
+  } else if (cmdUpper == "GPS") {
+    buoyPrintln("=== GPS ===");
+    float lat    = myGNSS.getLatitude()         / 10000000.0;
+    float lon    = myGNSS.getLongitude()        / 10000000.0;
+    float alt    = myGNSS.getAltitudeMSL()      / 1000.0;
+    float hAcc   = myGNSS.getHorizontalAccEst() / 1000.0;
+    uint8_t fix      = myGNSS.getFixType();
+    uint8_t carrier  = myGNSS.getCarrierSolutionType();
+    uint8_t siv      = myGNSS.getSIV();
+    String rtk = (carrier == 2) ? "Fixed" : (carrier == 1) ? "Float" : "None";
+    buoyPrintln("Lat:  " + String(lat, 7));
+    buoyPrintln("Lon:  " + String(lon, 7));
+    buoyPrintln("Alt:  " + String(alt, 2) + " m");
+    buoyPrintln("Fix:  " + String(fix));
+    buoyPrintln("RTK:  " + rtk);
+    buoyPrintln("hAcc: " + String(hAcc, 3) + " m");
+    buoyPrintln("SIV:  " + String(siv));
+    buoyPrintln("===========");
+
+  // --- RESET ---
+  } else if (cmdUpper == "RESET") {
+    buoyPrintln("Resetting NTRIP connection...");
+    ntripConnected = false;
+    lastNTRIPAttempt = 0;
+
+  // --- SLEEP ---
+  } else if (cmdUpper == "SLEEP") {
+    buoyPrintln("Entering light sleep. Press button to wake.");
+    ntripConnected = false;
+    digitalWrite(STATUS_LED, LOW);
+    delay(500);
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+    esp_light_sleep_start();
+    buoyPrintln("Woke from sleep.");
+
+  } else {
+    buoyPrintln("Unknown command: " + cmd);
+    buoyPrintln("Commands: STATUS GPS RESET SLEEP");
+  }
+}
+
+// ============================================================
+// Broadcast GPS position over BLE (compact one-liner)
+// ============================================================
+void broadcastGPS() {
+  if (!bleConnected) return;
+  float lat     = myGNSS.getLatitude()        / 10000000.0;
+  float lon     = myGNSS.getLongitude()       / 10000000.0;
+  float alt     = myGNSS.getAltitudeMSL()     / 1000.0;
+  float hAcc    = myGNSS.getHorizontalAccEst()/ 1000.0;
+  uint8_t carrier = myGNSS.getCarrierSolutionType();
+  String rtk = (carrier == 2) ? "FIX" : (carrier == 1) ? "FLT" : "NON";
+  buoyPrintln("GPS " + String(lat, 7) + " " + String(lon, 7) +
+              " alt:" + String(alt, 1) + "m RTK:" + rtk +
+              " hAcc:" + String(hAcc, 3) + "m");
+}
 
 void setup() {
   // USB Debug Serial
   Serial.begin(115200);
-  SerialBT.begin(device_name);
-  Serial.println("Connecting to bluetooth...");
-  
-  // Use if bluetooth seems to be acting up
-  // SerialBT.deleteAllBondedDevices(); // Uncomment this to delete paired devices; Must be called after begin
+
+  // BLE NUS init — name includes MAC suffix for multi-buoy ID
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_BT);
+  char bleName[20];
+  snprintf(bleName, sizeof(bleName), "RTK-Buoy-%02X%02X", mac[4], mac[5]);
+
+  BLEDevice::init(bleName);
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+  BLEService* pService = pServer->createService(BLE_SERVICE_UUID);
+
+  pTxChar = pService->createCharacteristic(BLE_CHAR_TX_UUID,
+              BLECharacteristic::PROPERTY_NOTIFY);
+  pTxChar->addDescriptor(new BLE2902());
+
+  BLECharacteristic* pRxChar = pService->createCharacteristic(BLE_CHAR_RX_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  pRxChar->setCallbacks(new RxCallbacks());
+
+  pService->start();
+  pServer->getAdvertising()->start();
+  Serial.println("BLE advertising as: " + String(bleName));
+
   delay(2000);
-  Serial.println(F("\n=== Buoy Combo - UART GPS ==="));
-  SerialBT.println("\n=== Buoy Combo - UART GPS ===");
+  buoyPrintln("\n=== Buoy Combo - UART GPS ===");
 
   // Setting Pins
   pinMode(STATUS_LED, OUTPUT);
@@ -104,42 +242,40 @@ void setup() {
   pinMode(RST, OUTPUT);
   digitalWrite(RST, HIGH);
   
-  Serial.println(F("Powering on modem..."));
-  SerialBT.println(F("Powering on modem..."));
+  buoyPrintln("Powering on modem...");
   modem.powerOn(BOTLETICS_PWRKEY);
   delay(5000);
 
-  Serial.println(F("Configuring modem to 9600 baud"));
-  SerialBT.println(F("Configuring modem to 9600 baud"));
+  buoyPrintln("Configuring modem to 9600 baud");
   if (!modemLinkBegin()) {
-    Serial.println(F("Couldn't find modem"));
-    SerialBT.println(F("Couldn't find modem"));
+    buoyPrintln("Couldn't find modem");
     while (1);
   }
 
   type = modem.type();
-  Serial.println(F("SIM7000 detected"));
-  SerialBT.println(F("SIM7000 detected"));
+  buoyPrintln("SIM7000 detected");
   
   uint8_t imeiLen = modem.getIMEI(imei);
   if (imeiLen > 0) {
-    Serial.print(F("Module IMEI: ")); 
-    SerialBT.println(F("Module IMEI: "));
-    Serial.println(imei);
-    SerialBT.println(imei);
+    buoyPrint("Module IMEI: ");
+    buoyPrintln(imei);
   }
 
   modem.configureNetwork();
 
-  Serial.println(F("Setup complete — waiting for CGREG registration\n"));
-  SerialBT.println(F("Setup complete\n"));
+  buoyPrintln("Setup complete — waiting for CGREG registration\n");
 }
 
 void loop() {
+  // Dispatch BLE commands
+  if (bleDataReady) {
+    bleDataReady = false;
+    handleBLECommand(String(bleRxBuf));
+  }
+
   // Handle user AT commands
   if (Serial.available()) {
-    Serial.print(F("modem> "));
-    SerialBT.println(F("modem>" ));
+    buoyPrint("modem> ");
     while (Serial.available()) {
       modemSS.write(Serial.read());
     }
@@ -192,13 +328,9 @@ void loop() {
       const char* rtkStr = (carrSoln == 2) ? "FIXED" :
                            (carrSoln == 1) ? "float" : "none";
 
-      Serial.print(F("[GPS] fix="));    Serial.print(fixType);
-      Serial.print(F(" rtk="));         Serial.print(rtkStr);
-      Serial.print(F(" sats="));        Serial.println(sats);
-
-      SerialBT.print(F("[GPS] fix="));  SerialBT.print(fixType);
-      SerialBT.print(F(" rtk="));       SerialBT.print(rtkStr);
-      SerialBT.print(F(" sats="));      SerialBT.println(sats);
+      buoyPrint("[GPS] fix=");    buoyPrint(fixType);
+      buoyPrint(" rtk=");         buoyPrint(rtkStr);
+      buoyPrint(" sats=");        buoyPrintln(sats);
     }
   }
   
