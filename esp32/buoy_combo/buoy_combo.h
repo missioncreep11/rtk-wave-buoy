@@ -28,9 +28,11 @@ inline void buoyPrintln(long v)               { buoyPrintln(String(v)); }
 inline void buoyPrintln(unsigned long v)      { buoyPrintln(String(v)); }
 inline void buoyPrintln(uint8_t v)            { buoyPrintln(String((unsigned int)v)); }
 inline void buoyPrintln(uint16_t v)           { buoyPrintln(String((unsigned int)v)); }
-inline void buoyPrintln(float v, int p = 2)   { buoyPrint(String(v, p)); }
-inline void buoyPrintln(double v, int p = 2)  { buoyPrint(String(v, p)); }
+inline void buoyPrintln(float v, int p = 2)   { buoyPrintln(String(v, p)); }
+inline void buoyPrintln(double v, int p = 2)  { buoyPrintln(String(v, p)); }
+
 extern bool bleConnected;
+
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_system.h>
 #endif
@@ -143,30 +145,29 @@ public:
 
   void printDiagnostics() {
     const uint16_t t = 3000;
-    getReply(F("AT+CPIN?"), t);
-    Serial.print(F("[DIAG] CPIN: "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CPIN: "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+CFUN?"), t);
-    Serial.print(F("[DIAG] CFUN: "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CFUN: "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+CREG?"), t);
-    Serial.print(F("[DIAG] CREG (circuit): "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CREG (circuit): "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+CGREG?"), t);
-    Serial.print(F("[DIAG] CGREG (LTE data — used by [NET]): "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CGREG (LTE data — used by [NET]): "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+CSQ"), t);
-    Serial.print(F("[DIAG] CSQ: "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CSQ: "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+CGATT?"), t);
-    Serial.print(F("[DIAG] CGATT: "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CGATT: "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+COPS?"), t);
-    Serial.print(F("[DIAG] COPS: "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] COPS: "));
+    buoyPrintln(replybuffer);
     getReply(F("AT+CNACT?"), t);
-    Serial.print(F("[DIAG] CNACT: "));
-    Serial.println(replybuffer);
+    buoyPrint(F("[DIAG] CNACT: "));
+    buoyPrintln(replybuffer);
   }
 
   bool waitModemAtReady(uint32_t timeoutMs = MODEM_AT_READY_TIMEOUT_MS) {
@@ -222,9 +223,7 @@ public:
     char bandCmd[48];
     snprintf(bandCmd, sizeof(bandCmd), "AT+CBANDCFG=\"CAT-M\",%d", LTE_CATM_BAND);
     if (!sendCheckReply(bandCmd, ok_reply, 8000)) {
-      Serial.print(F("[MODEM] CBANDCFG band "));
-      Serial.print(LTE_CATM_BAND);
-      Serial.println(F(" failed — trying US 2,4,12,13"));
+      buoyPrintln("[MODEM] CBANDCFG band " + String(LTE_CATM_BAND) + " failed — trying US 2,4,12,13");
       buoyPrintln("[MODEM] CBANDCFG fallback 2,4,12,13");
       if (!sendCheckReply(LTE_CATM_US_FALLBACK, ok_reply, 8000)) {
         ok = false;
@@ -234,17 +233,14 @@ public:
     sendCheckReply(F("AT+CGREG=2"), ok_reply, 3000);
 
     getReply(F("AT+CBANDCFG?"), (uint16_t)3000);
-    buoyPrint("[MODEM] CBANDCFG: ");
-    buoyPrintln(replybuffer);
+    buoyPrintln("[MODEM] CBANDCFG: " + String(replybuffer));
 
     return ok;
   }
 
   // afterRecover: CFUN=0 band cycle (post-RST/PWRKEY). Boot keeps radio on.
   bool configureLteCatM(bool afterRecover = false) {
-    Serial.print(F("[MODEM] LTE CAT-M, band "));
-    Serial.print(LTE_CATM_BAND);
-    Serial.println(afterRecover ? F(" (recover)") : F(" (boot)"));
+    buoyPrintln("[MODEM] LTE CAT-M, band " + String(LTE_CATM_BAND) + (afterRecover ? " (recover)" : " (boot)"));
 
     if (!simPinReady()) {
       getReply(F("AT+CPIN?"), (uint16_t)3000);
@@ -274,31 +270,33 @@ public:
     return strchr(replybuffer, '.') != nullptr && strstr(replybuffer, "0.0.0.0") == nullptr;
   }
 
-  void configureNetwork(bool afterRecover = false) {
+  bool configureNetwork(bool afterRecover = false) {
     if (!waitModemAtReady()) {
       buoyPrintln("[MODEM] WARN: modem not AT-ready before config");
     }
-
+ 
     if (!afterRecover) {
       setFunctionality(1);
       delay(2000);
     }
-
+ 
     setNetworkSettings(F("hologram"));
-
-    if (!configureLteCatM(afterRecover)) {
+ 
+    bool ok = configureLteCatM(afterRecover);
+    if (!ok) {
       buoyPrintln("[MODEM] WARN: LTE CAT-M band config failed");
     }
-
+ 
     ensureCfun1();
-
+ 
     sendCheckReply(F("AT+CGATT=1"), ok_reply, 15000);
     sendCheckReply(F("AT+COPS=0"), ok_reply, 60000);
     sendCheckReply(F("AT+CMEE=2"), ok_reply, 3000);
     sendCheckReply(F("AT+CDNSCFG=1,\"8.8.8.8\",\"1.1.1.1\""), ok_reply, 5000);
-
+ 
     buoyPrintln("[MODEM] post-config diagnostics:");
     printDiagnostics();
+    return ok;
   }
 
 private:
@@ -465,16 +463,14 @@ bool BuoyModem::tcpSendPlain(const char *packet, uint16_t len) {
 }
 
 bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
-  Serial.println(F("[HOLO] CIPSTART cloudsocket.hologram.io:9999"));
+  buoyPrintln("[HOLO] CIPSTART cloudsocket.hologram.io:9999");
   if (!tcpConnectPlain("cloudsocket.hologram.io", 9999)) {
-    Serial.println(F("[HOLO] CIPSTART FAILED"));
+    buoyPrintln("[HOLO] CIPSTART FAILED");
     return false;
   }
-  Serial.print(F("[HOLO] CIPSEND "));
-  Serial.print(len);
-  Serial.println(F(" bytes"));
+  buoyPrintln("[HOLO] CIPSEND " + String(len) + " bytes");
   if (!tcpSendPlain(msg, len)) {
-    Serial.println(F("[HOLO] CIPSEND FAILED"));
+    buoyPrintln("[HOLO] CIPSEND FAILED");
     sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
     return false;
   }
@@ -504,11 +500,7 @@ bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
     }
   }
 
-  Serial.print(F("[HOLO] response ("));
-  Serial.print(respLen);
-  Serial.print(F(" bytes): '"));
-  Serial.print(respBuf);
-  Serial.println(F("'"));
+  buoyPrintln("[HOLO] response (" + String(respLen) + " bytes): '" + String(respBuf) + "'");
 
   sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
   return ok;
@@ -516,10 +508,8 @@ bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
 
 void initialize_gnss_uart_f() {
   buoyPrintln("=== Initializing ZED-F9P via UART ===");
-  buoyPrint("TX_GPS pin: ");
-  buoyPrintln(TX_GPS);
-  buoyPrint("RX_GPS pin: ");
-  buoyPrintln(RX_GPS);
+  buoyPrintln("TX_GPS pin: " + String (TX_GPS));
+  buoyPrintln("RX_GPS pin: " + String (RX_GPS));
   
   const long baudRates[] = {115200, 115200, 115200, 115200, 115200};
   const int numRates = 5;
@@ -553,7 +543,7 @@ void initialize_gnss_uart_f() {
       return;
       
     } else {
-      Serial.println(F("  Failed"));
+      buoyPrintln("  Failed");
     }
     
     gpsSerial.end();
@@ -592,14 +582,6 @@ void print_power_status_f() {
     buoyPrintln("[PWR] (bench/USB — INA228 not on active battery rail)");
     return;
   }
-
-  Serial.print(F("[PWR] I="));
-  Serial.print(currentMa, 2);
-  Serial.print(F(" mA  V="));
-  Serial.print(busV, 3);
-  Serial.print(F(" V  P="));
-  Serial.print(powerMw, 1);
-  Serial.println(F(" mW"));
 
   buoyPrint("[PWR] I=");
   buoyPrint(currentMa, 2);
@@ -677,8 +659,7 @@ static bool modemColdBootSequence() {
   modem.invalidateCipStack();
   modemUartFlush();
   if (!modemLinkBegin()) {
-    Serial.println(F("[MODEM] UART/begin failed"));
-    SerialBT.println(F("[MODEM] UART/begin failed"));
+    buoyPrintln("[MODEM] UART/begin failed");
     return false;
   }
   modem.configureNetwork(false);
@@ -719,14 +700,11 @@ bool modemHardRecover_f(const __FlashStringHelper *reason) {
   digitalWrite(MODEM_RST_PIN, HIGH);
   delay(MODEM_POST_RST_MS);
 
-  modem.configureNetwork(true);
-  buoyPrintln("[MODEM] hard recover done — waiting for CGREG");
-  return true;
-}
-
-  Serial.println(F("[MODEM] hard recover config failed — full power cycle"));
-  SerialBT.println(F("[MODEM] hard recover config failed — full power cycle"));
-  return modemPowerCycleRecover_f(F("hard recover config failed"), true);
+  if (modem.configureNetwork(true)) {
+    buoyPrintln("[MODEM] hard recover done — waiting for CGREG");
+    return true;
+  }
+  return false;
 }
 
 bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
@@ -751,8 +729,7 @@ bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
   modem.sendCheckReply(F("AT+CPOWD=1"), F("NORMAL POWER DOWN"), 5000);
   delay(1000);
   modemPwrkeyPowerOff();
-  Serial.println(F("[MODEM] modem off — settling (battery-like delay)"));
-  SerialBT.println(F("[MODEM] modem off — settling"));
+  buoyPrintln("[MODEM] modem off — settling");
   delay(MODEM_FULL_POWER_OFF_SETTLE_MS);
 
   buoyPrintln("[MODEM] PWRKEY power on...");
@@ -766,24 +743,21 @@ bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
     return false;
   }
 
-  modem.configureNetwork(true);
-  buoyPrintln("[MODEM] power cycle done — waiting for CGREG");
-  return true;
+  if (modem.configureNetwork(true)) {
+    buoyPrintln("[MODEM] power cycle done — waiting for CGREG");
+    return true;
+  }
+  return false;
 }
 
 static bool s_modemRecoverNextPowerCycle = false;
 
 void modemRecoverEscalated_f(const __FlashStringHelper *reason) {
-  // Battery disconnect resets modem power + UART + boot config. Try that first.
   if (modemPowerCycleRecover_f(reason, false)) {
-    s_modemRecoverNextPowerCycle = false;
     return;
   }
-  Serial.println(F("[MODEM] power cycle unavailable — trying RST recover"));
-  SerialBT.println(F("[MODEM] power cycle unavailable — trying RST recover"));
-  if (modemHardRecover_f(reason)) {
-    s_modemRecoverNextPowerCycle = true;
-  }
+  buoyPrintln("[MODEM] power cycle failed — trying RST recover");
+  modemHardRecover_f(reason);
 }
 
 static void modemRecoverEscalationReset() {
@@ -897,8 +871,7 @@ void network_status_check_f() {
       if (unregDuration >= MODEM_STUCK_FORCE_CYCLE_MS &&
           millis() - lastForcedFullCycleMs >= MODEM_STUCK_FORCE_CYCLE_MS) {
         lastForcedFullCycleMs = millis();
-        Serial.println(F("[MODEM] prolonged unregistered — forced power cycle"));
-        SerialBT.println(F("[MODEM] prolonged unregistered — forced power cycle"));
+        buoyPrintln("[MODEM] prolonged unregistered — forced power cycle");
         modemPowerCycleRecover_f(F("prolonged unregistered"), true);
         unregisteredSinceMs = millis();
       } else {
@@ -986,7 +959,7 @@ void post_telemetry_f() {
   }
 
   if (n <= 0 || n >= (int)sizeof(body)) {
-    Serial.println(F("[TELEM] JSON build failed"));
+    buoyPrintln("[TELEM] JSON build failed");
     return;
   }
 
@@ -1017,16 +990,16 @@ void post_telemetry_f() {
   // device key is valid.
   bool wasNtrip = ntripConnected;
   if (wasNtrip) {
-    Serial.println(F("[TELEM] closing NTRIP for Hologram send..."));
+    buoyPrintln("[TELEM] closing NTRIP for Hologram send...");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
     ntripConnected = false;
     modem.invalidateCipStack();
     delay(2000);
-    Serial.println(F("[TELEM] ensurePdpActive..."));
+    buoyPrintln("[TELEM] ensurePdpActive...");
     modem.ensurePdpActive();
   }
 
-  Serial.println(F("[TELEM] Hologram cloud..."));
+  buoyPrintln("[TELEM] Hologram cloud...");
   bool ok = modem.sendHologramCloudMessage(msg, (uint16_t)n);
   buoyPrintln(ok ? "[TELEM] Hologram OK" : "[TELEM] Hologram failed");
   if (ok) {

@@ -3,16 +3,7 @@
 #ifndef BOTLETICS_SSL
 #define BOTLETICS_SSL 0
 #endif
-#include "BotleticsSIM7000.h"
-#include <HardwareSerial.h>
-#include <Wire.h>
-#include <Adafruit_INA228.h>
-#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
-#if defined(ARDUINO_ARCH_ESP32)
-#include "base64.h"
-#else
-#include <Base64.h>
-#endif
+
 #include <Arduino.h>
 
 // BLE - Nordic UART Service (NUS), compatible with nRF Connect
@@ -109,7 +100,7 @@ class ServerCallbacks : public BLEServerCallbacks {
   }
   void onDisconnect(BLEServer* pServer) {
     bleConnected = false;
-    Serial.println(F("BLE disconnected - restarting advertising"));
+    buoyPrintln("BLE disconnected - restarting advertising");
     pServer->startAdvertising();
   }
 };
@@ -193,11 +184,14 @@ void broadcastGPS() {
   float lon     = myGNSS.getLongitude()       / 10000000.0;
   float alt     = myGNSS.getAltitudeMSL()     / 1000.0;
   float hAcc    = myGNSS.getHorizontalAccEst()/ 1000.0;
+  uint8_t sats  = myGNSS.getSIV();
   uint8_t carrier = myGNSS.getCarrierSolutionType();
-  String rtk = (carrier == 2) ? "FIX" : (carrier == 1) ? "FLT" : "NON";
-  buoyPrintln("GPS " + String(lat, 7) + " " + String(lon, 7) +
-              " alt:" + String(alt, 1) + "m RTK:" + rtk +
-              " hAcc:" + String(hAcc, 3) + "m");
+  String rtk = (carrier == 2) ? "FIX" : (carrier == 1) ? "FLOAT" : "NONE";
+  buoyPrintln("GPS " + String(lat, 7) + " " + String(lon, 7) + "\n"
+              "alt=" + String(alt, 1) + "\n" + 
+              "m RTK=" + rtk + "\n" +
+              "horizAcc=" + String(hAcc, 3) + "\n" + 
+              "sats=" + String(sats));
 }
 
 void setup() {
@@ -225,7 +219,7 @@ void setup() {
 
   pService->start();
   pServer->getAdvertising()->start();
-  Serial.println("BLE advertising as: " + String(bleName));
+  buoyPrintln("BLE advertising as: " + String(bleName));
 
   delay(2000);
   buoyPrintln("\n=== Buoy Combo - UART GPS ===");
@@ -301,13 +295,6 @@ void loop() {
   if (ntripConnected) {
     handleNTRIPData();
   }
-
-  // May cause problems and its not really needed unless debugging, if needed maybe use i2c for print_gps_status_f() - Amara
-  //  Print GPS status periodically
-  // if (gpsUARTOnline && (millis() - lastGPSPrint > 1000)) {
-  //   lastGPSPrint = millis();
-  //   print_gps_status_f();
-  // }
   
   monitor_connection_health();
 
@@ -321,16 +308,7 @@ void loop() {
     print_power_status_f();
 
     if (gpsUARTOnline && myGNSS.getPVT()) {  // single poll, populates everything below
-      uint8_t fixType  = myGNSS.getFixType();           // 0=no, 2=2D, 3=3D, 4=GNSS+DR
-      uint8_t carrSoln = myGNSS.getCarrierSolutionType(); // 0=none, 1=float, 2=FIXED
-      uint8_t sats     = myGNSS.getSIV();
-
-      const char* rtkStr = (carrSoln == 2) ? "FIXED" :
-                           (carrSoln == 1) ? "float" : "none";
-
-      buoyPrint("[GPS] fix=");    buoyPrint(fixType);
-      buoyPrint(" rtk=");         buoyPrint(rtkStr);
-      buoyPrint(" sats=");        buoyPrintln(sats);
+      broadcastGPS();
     }
   }
   
