@@ -988,8 +988,7 @@ void post_telemetry_f() {
   // CIP stack as busy when sendHologramCloudMessage tried to CIPSTART again,
   // producing intermittent [TELEM] Hologram failed even when the Hologram
   // device key is valid.
-  bool wasNtrip = ntripConnected;
-  if (wasNtrip) {
+  if (ntripConnected) {
     buoyPrintln("[TELEM] closing NTRIP for Hologram send...");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
     ntripConnected = false;
@@ -1005,7 +1004,7 @@ void post_telemetry_f() {
   if (ok) {
     noteCellularActivity();
   }
-  if (wasNtrip) {
+  if (ntripConnected) {
     lastNTRIPAttempt = 0;
   }
 }

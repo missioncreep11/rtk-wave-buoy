@@ -176,7 +176,7 @@ void handleBLECommand(String cmd) {
 }
 
 // ============================================================
-// Broadcast GPS position over BLE (compact one-liner)
+// Print GPS status over BLE
 // ============================================================
 void broadcastGPS() {
   if (!bleConnected) return;
@@ -188,9 +188,9 @@ void broadcastGPS() {
   uint8_t carrier = myGNSS.getCarrierSolutionType();
   String rtk = (carrier == 2) ? "FIX" : (carrier == 1) ? "FLOAT" : "NONE";
   buoyPrintln("GPS " + String(lat, 7) + " " + String(lon, 7) + "\n"
-              "alt=" + String(alt, 1) + "\n" + 
-              "m RTK=" + rtk + "\n" +
-              "horizAcc=" + String(hAcc, 3) + "\n" + 
+              "alt=" + String(alt, 1) + "m\n" + 
+              "RTK=" + rtk + "\n" +
+              "horizAcc=" + String(hAcc, 3) + "m\n" + 
               "sats=" + String(sats));
 }
 
