@@ -49,7 +49,6 @@ const char hologramDeviceKey[] = "";
 #endif
 
 // Pin Definitions
-#define SIMCOM_7000
 #define BOTLETICS_PWRKEY 18
 #define RST 5
 #define TX_MODEM 17  // ESP32 TX1 to Modem RX
@@ -68,7 +67,6 @@ Adafruit_INA228 ina228;
 // Flags
 bool networkConnected = false;
 bool gprsEnabled = false;
-bool gpsEnabled = false;
 bool ntripConnected = false;
 bool gpsUARTOnline = false;
 bool ina228Online = false;
@@ -82,12 +80,9 @@ unsigned long lastNTRIPAttempt = 0;
 unsigned long lastCellularActivity_ms = 0;
 unsigned long lastGprsEnabled_ms = 0;
 uint8_t consecutiveNtripFailures = 0;
-long lastGPSPrint = 0;
 unsigned long lastFixStatusPrint = 0;
 
 // Configuration
-uint8_t type;
-char replybuffer[255];
 char imei[16] = {0};
 
 // ============================================================
@@ -136,22 +131,7 @@ void handleBLECommand(String cmd) {
   // --- GPS ---
   } else if (cmdUpper == "GPS") {
     buoyPrintln("=== GPS ===");
-    float lat    = myGNSS.getLatitude()         / 10000000.0;
-    float lon    = myGNSS.getLongitude()        / 10000000.0;
-    float alt    = myGNSS.getAltitudeMSL()      / 1000.0;
-    float hAcc   = myGNSS.getHorizontalAccEst() / 1000.0;
-    uint8_t fix      = myGNSS.getFixType();
-    uint8_t carrier  = myGNSS.getCarrierSolutionType();
-    uint8_t siv      = myGNSS.getSIV();
-    String rtk = (carrier == 2) ? "Fixed" : (carrier == 1) ? "Float" : "None";
-    buoyPrintln("Lat:  " + String(lat, 7));
-    buoyPrintln("Lon:  " + String(lon, 7));
-    buoyPrintln("Alt:  " + String(alt, 2) + " m");
-    buoyPrintln("Fix:  " + String(fix));
-    buoyPrintln("RTK:  " + rtk);
-    buoyPrintln("hAcc: " + String(hAcc, 3) + " m");
-    buoyPrintln("SIV:  " + String(siv));
-    buoyPrintln("===========");
+    broadcastGPS();
 
   // --- RESET ---
   } else if (cmdUpper == "RESET") {
@@ -246,7 +226,6 @@ void setup() {
     while (1);
   }
 
-  type = modem.type();
   buoyPrintln("SIM7000 detected");
   
   uint8_t imeiLen = modem.getIMEI(imei);
