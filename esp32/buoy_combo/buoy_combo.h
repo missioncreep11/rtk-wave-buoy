@@ -148,7 +148,6 @@ public:
   bool applyLteCatMBandSettings();
   bool configureLteCatM(bool afterRecover = false);
   void invalidateCipStack();
-  bool cnactHasIp();
   bool configureNetwork(bool afterRecover = false);
 
 private:

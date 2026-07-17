@@ -26,6 +26,12 @@ volatile bool bleDataReady = false;
 #include "secrets.h"
 #include "buoy_combo.h"
 
+// ========================================================
+// TODO: Normalize style: camelCase for functions and vars,
+// m_camelCase for members, ALL_CAPS for macros, 
+// PascalCase for classes, 2 space indentation
+// ========================================================
+
 // BLE output helpers — echo to Serial and BLE simultaneously
 void buoyPrint(const String& msg) {
   Serial.print(msg);
@@ -191,7 +197,7 @@ bool BuoyModem::applyLteCatMBandSettings() {
 }
 
 // KH -- if booting, applies CAT-M band settings and ensures radio is on. if recovering, checks 
-// if functionality is minimal (required for band reconfig)
+// if functionality is minimal (required for band reconfig) beforehand
 bool BuoyModem::configureLteCatM(bool afterRecover) {
     buoyPrintln("[MODEM] LTE CAT-M, band " + String(LTE_CATM_BAND) + (afterRecover ? " (recover)" : " (boot)"));
     if (afterRecover) {
@@ -207,12 +213,9 @@ bool BuoyModem::configureLteCatM(bool afterRecover) {
     return ok;
 }
 
+// KH -- forces CIP stack rebuild
 void BuoyModem::invalidateCipStack() { _cipStackUp = false; }
 
-bool BuoyModem::cnactHasIp() {
-    getReply(F("AT+CNACT?"), (uint16_t)3000);
-    return strchr(replybuffer, '.') != nullptr && strstr(replybuffer, "0.0.0.0") == nullptr;
-}
 
 bool BuoyModem::configureNetwork(bool afterRecover) {
     if (!waitModemAtReady()) {
@@ -303,7 +306,7 @@ bool BuoyModem::tcpConnectPlain(const char *server, uint16_t port) {
     if (strstr(replybuffer, "CONNECT OK") || strstr(replybuffer, "ALREADY CONNECT")) return true;
     if (strstr(replybuffer, "PDP DEACT") || strstr(replybuffer, "CONNECT FAIL") ||
         strstr(replybuffer, "ERROR")) {
-      _cipStackUp = false;  // force re-bring-up next attempt
+      invalidateCipStack();  // force re-bring-up next attempt
       return false;
     }
   }
