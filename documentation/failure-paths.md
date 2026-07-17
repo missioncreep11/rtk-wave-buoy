@@ -54,7 +54,7 @@ flowchart TD
 | Path | Called from | Radio | Band config | Log |
 |------|-------------|-------|-------------|-----|
 | **Boot** | `setup()` → `configureNetwork(false)` | `setFunctionality(1)` first | `configureLteCatM(false)` at **CFUN=1** | `(boot)` |
-| **Recover** | RST / power cycle → `configureNetwork(true)` | Optional `CFUN=0` | `configureLteCatM(true)` + `ensureCfun1()` | `(recover)` |
+| **Recover** | RST / power cycle → `configureNetwork(true)` | Optional `CFUN=0` | `configureLteCatM(true)` + `ensureRadioOn()` | `(recover)` |
 
 | Log | Meaning |
 |-----|---------|
