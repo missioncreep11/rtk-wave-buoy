@@ -91,34 +91,45 @@ char imei[16] = {0};
 // BuoyModem method implementations
 // ============================================================
 
+// TODO: Make actual print msgs and replies more readable
 void BuoyModem::printDiagnostics() {
     const uint16_t t = 3000;
+    // KH -- SIM PIN status: READY if no password needed, SIM PIN if awaiting password
     getReply(F("AT+CPIN?"), t);
     buoyPrint(F("[DIAG] CPIN: "));
     buoyPrintln(replybuffer);
+    // KH -- Modem Functionality Level: 0 if minimal, 1 if full (this is what you want)
     getReply(F("AT+CFUN?"), t);
     buoyPrint(F("[DIAG] CFUN: "));
     buoyPrintln(replybuffer);
+    // KH -- network registration: 0 if not registered, 1 if registered at home, 5 if roaming
     getReply(F("AT+CREG?"), t);
     buoyPrint(F("[DIAG] CREG (circuit): "));
     buoyPrintln(replybuffer);
+    // KH -- GPRS network registration: 0 if not registered, 1 if registered at home, 5 if roaming (typical)
     getReply(F("AT+CGREG?"), t);
     buoyPrint(F("[DIAG] CGREG (LTE data — used by [NET]): "));
     buoyPrintln(replybuffer);
+    // KH -- Signal quality: 2-31 is proper
     getReply(F("AT+CSQ"), t);
     buoyPrint(F("[DIAG] CSQ: "));
     buoyPrintln(replybuffer);
+    // KH -- GPRS attachment status: 0 if not attached, 1 if attached
     getReply(F("AT+CGATT?"), t);
     buoyPrint(F("[DIAG] CGATT: "));
     buoyPrintln(replybuffer);
+    // KH -- Operator Selection: format is <mode> (0 is auto select, 1 is manual), <format> (0 is long alphanum, 1 is short),
+    // <operator> (Verizon, AT&T, etc), <access technology> (7 for LTE)
     getReply(F("AT+COPS?"), t);
     buoyPrint(F("[DIAG] COPS: "));
     buoyPrintln(replybuffer);
+    // KH -- APP Network Status: format is <mode> (0 for inactive, 1 for active), <access point name> (will give a real IP if connected)
     getReply(F("AT+CNACT?"), t);
     buoyPrint(F("[DIAG] CNACT: "));
     buoyPrintln(replybuffer);
 }
 
+// KH -- checks modem activity with AT+CPIN for a specified amount of time, pauses ESP32 for 500ms if not
 bool BuoyModem::waitModemAtReady(uint32_t timeoutMs) {
     const uint32_t deadline = millis() + timeoutMs;
     while ((int32_t)(deadline - millis()) > 0) {
@@ -134,12 +145,8 @@ bool BuoyModem::waitModemAtReady(uint32_t timeoutMs) {
     return false;
 }
 
-bool BuoyModem::simPinReady() {
-    getReply(F("AT+CPIN?"), (uint16_t)3000);
-    return (strstr(replybuffer, "READY") != nullptr ||
-            strstr(replybuffer, "SIM PIN") != nullptr);
-}
-
+// KH -- Returns true if modem is operating at full functionality via AT+CFUN, sets to full functionality if not,
+// returns false if fails
 bool BuoyModem::ensureRadioOn() {
     getReply(F("AT+CFUN?"), (uint16_t)3000);
     if (strstr(replybuffer, ": 1") != nullptr) {
@@ -153,6 +160,7 @@ bool BuoyModem::ensureRadioOn() {
     return false;
 }
 
+// KH -- tries to set CAT-M band to preferred settings and then fallbacks, returns true if successful
 bool BuoyModem::applyLteCatMBandSettings() {
     bool ok = true;
     if (!setPreferredMode(38)) {
@@ -182,20 +190,13 @@ bool BuoyModem::applyLteCatMBandSettings() {
     return ok;
 }
 
+// KH -- if booting, applies CAT-M band settings and ensures radio is on. if recovering, checks 
+// if functionality is minimal (required for band reconfig)
 bool BuoyModem::configureLteCatM(bool afterRecover) {
     buoyPrintln("[MODEM] LTE CAT-M, band " + String(LTE_CATM_BAND) + (afterRecover ? " (recover)" : " (boot)"));
-
-    if (!simPinReady()) {
-      getReply(F("AT+CPIN?"), (uint16_t)3000);
-      buoyPrint("[MODEM] SKIP band config — CPIN: ");
-      buoyPrintln(replybuffer);
-      return false;
-    }
-
     if (afterRecover) {
       if (!sendCheckReply(F("AT+CFUN=0"), ok_reply, 10000) && ensureRadioOn()) {
         buoyPrintln("[MODEM] CFUN=0 failed (recover band config)");
-        ensureRadioOn();
         return false;
       }
       delay(1500);

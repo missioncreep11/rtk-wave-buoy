@@ -144,7 +144,6 @@ public:
   bool sendHologramCloudMessage(const char *msg, uint16_t len);
   void printDiagnostics();
   bool waitModemAtReady(uint32_t timeoutMs = MODEM_AT_READY_TIMEOUT_MS);
-  bool simPinReady();
   bool ensureRadioOn();
   bool applyLteCatMBandSettings();
   bool configureLteCatM(bool afterRecover = false);
