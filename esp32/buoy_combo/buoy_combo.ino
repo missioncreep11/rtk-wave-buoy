@@ -89,6 +89,7 @@ unsigned long lastGprsEnabled_ms = 0;
 uint8_t consecutiveNtripFailures = 0;
 unsigned long lastFixStatusPrint = 0;
 long lastGPSPrint = 0;
+const unsigned long ggaInterval_ms = 10000;
 
 // Configuration
 char imei[16] = {0};
@@ -166,7 +167,7 @@ bool BuoyModem::ensureRadioOn() {
     return false;
 }
 
-// KH -- tries to set CAT-M band to preferred settings and then fallbacks, returns true if successful
+// KH -- tries to set CAT-M band to preferred settings and tries fallbacks, returns true if successful
 bool BuoyModem::applyLteCatMBandSettings() {
     bool ok = true;
     if (!setPreferredMode(38)) {
@@ -216,7 +217,8 @@ bool BuoyModem::configureLteCatM(bool afterRecover) {
 // KH -- forces CIP stack rebuild
 void BuoyModem::invalidateCipStack() { _cipStackUp = false; }
 
-
+// KH -- First checks modem operational status, then configures functionality, provider, LTE band,
+// GPS attachment, error reporting, and DNS
 bool BuoyModem::configureNetwork(bool afterRecover) {
     if (!waitModemAtReady()) {
       buoyPrintln("[MODEM] WARN: modem not AT-ready before config");
@@ -255,6 +257,9 @@ bool BuoyModem::ensurePdpActive() {
   return wirelessConnStatus();
 }
 
+// KH -- If the boolean flag returns false, the GPRS PDP (Packet Data Protocol) context is shut down, 
+// an IP connection is started and contained, access point is brought up, then GPRS wireless, then 
+// IP is checked for success 
 bool BuoyModem::bringUpCipStack() {
   // The CIPSTART/CIPSEND/CIPRXGET stack is independent of CNACT.
   // Required order on SIM7000:
@@ -956,18 +961,28 @@ void beginNTRIPClient() {
   delay(1000);
 
   // Build HTTP GET request
-  String ntripRequest = "GET /" + String(mountPoint) + " HTTP/1.0\r\n";
-  ntripRequest += "User-Agent: NTRIP SparkFun u-blox Client v1.0\r\n";
+  // String ntripRequest = "GET /" + String(mountPoint) + " HTTP/1.1\r\n";
+  // ntripRequest += "User-Agent: NTRIP SparkFun u-blox Client v1.0\r\n";
+  // HTTP/1.1 with Ntrip-Version: Ntrip/2.0 — Polaris uses chunked transfer encoding
+  const int SERVER_BUFFER_SIZE = 512;
+  char serverRequest[SERVER_BUFFER_SIZE];
+  snprintf(serverRequest, SERVER_BUFFER_SIZE,
+    "GET /%s HTTP/1.1\r\n"
+    "Host: %s\r\n"
+    "Ntrip-Version: Ntrip/2.0\r\n"
+    "User-Agent: NTRIP SparkFun u-blox Client v1.0\r\n",
+    mountPoint, casterHost);
   if (strlen(casterUser) > 0) {
     String creds = String(casterUser) + ":" + String(casterUserPW);
     base64 b;
-    ntripRequest += "Authorization: Basic " + b.encode(creds) + "\r\n";
+    String printCreds = "Authorization: Basic " + b.encode(creds) + "\r\n";
+    strncat(serverRequest, printCreds.c_str(), SERVER_BUFFER_SIZE - strlen(serverRequest) - 1);
   } else {
-    ntripRequest += "Accept: */*\r\n";
+    strncat(serverRequest, "Accept: */*\r\n", SERVER_BUFFER_SIZE - strlen(serverRequest) - 1);
   }
-  ntripRequest += "\r\n";
+  strncat(serverRequest, "\r\n", SERVER_BUFFER_SIZE - strlen(serverRequest) - 1);
 
-  if (!modem.tcpSendPlain(ntripRequest.c_str(), ntripRequest.length())) {
+  if (!modem.tcpSendPlain(serverRequest, strlen(serverRequest))) {
     buoyPrintln("[NTRIP] send failed");
     ntripAttemptFailed();
     return;
