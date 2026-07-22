@@ -30,7 +30,7 @@ Plain JSON inside Hologram Cloud Socket wrapper:
 
 If fix &lt; 2, `lat`/`lon`/`alt_m` are omitted from the JSON.
 
-Built in `post_telemetry_f()` (`buoy_combo.h`).
+Built in `postTelemetry()` (`buoy_combo.h`).
 
 ---
 

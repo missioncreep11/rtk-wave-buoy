@@ -92,7 +92,7 @@ The `buoy_combo` firmware is designed as a robust state machine to handle unstab
 2. **GPRS Activation:** Establishes a packet data connection (PDP context) with the cellular network.
 3. **NTRIP Connection:** Opens a TCP socket to the RTK caster and streams RTCM correction data to the ZED-F9P GNSS receiver via a dedicated UART.
 4. **Telemetry Cycle:** Periodically (every $60$ s by default) closes the NTRIP socket briefly to send a JSON telemetry payload over the Hologram Cloud Socket, then reconnects.
-5. **Health Monitoring:** `network_status_check_f()` and `monitor_connection_health()` poll registration and the data path:
+5. **Health Monitoring:** `networkStatusCheck()` and `monitorConnectionHealth()` poll registration and the data path:
 
 | Fault | Detection | Recovery |
 |-------|-----------|----------|
@@ -102,7 +102,7 @@ The `buoy_combo` firmware is designed as a robust state machine to handle unstab
 | Registration timeout | `CGREG` not $1$/$5$ for $5$ min ($10$ min if searching + good `CSQ`) | **Escalated recover** (see below) |
 | NTRIP failure streak | $10$ consecutive NTRIP failures while GPRS up | **Escalated recover** (see below) |
 
-**Escalated modem recovery** (`modemRecoverEscalated_f`) — used for both registration timeout and NTRIP failure streak:
+**Escalated modem recovery** (`modemRecoverEscalated`) — used for both registration timeout and NTRIP failure streak:
 
 1. **First trigger** → RST pin reset + `configureNetwork(true)` — log: `[MODEM] hard recover` (**$10$ min** cooldown)
 2. **Next trigger** (if still stuck) → full PWRKEY power cycle + `modem.begin()` — log: `[MODEM] power cycle` (**$15$ min** cooldown)

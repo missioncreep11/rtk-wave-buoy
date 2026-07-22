@@ -21,8 +21,8 @@ Map of `esp32/buoy_combo/buoy_combo.ino` and `buoy_combo.h` for reading the sour
 ```text
 Serial + BluetoothSerial begin
 SHUTDOWN_BTN interrupt
-initialize_ina228_f()
-initialize_gnss_uart_f()     → UART2 ZED, RTCM3 on UART1
+initializeIna228()
+initializeGnssUart()     → UART2 ZED, RTCM3 on UART1
 modem RST high, powerOn(PWRKEY), delay 5s
 modemLinkBegin()             → UART1 @ 9600 then 115200
 modem.configureNetwork()     → boot path: CFUN=1 first, (boot) band log
@@ -37,13 +37,13 @@ On modem failure, sketch blocks in `while(1)`.
 | Order | Call | Role |
 |-------|------|------|
 | 1 | USB Serial → `modemSS` | Manual AT passthrough (returns early) |
-| 2 | `network_status_check_f()` | Poll `CGREG` / `CSQ`; registration lost handling |
-| 3 | `enable_gprs_f()` | PDP + CIP when registered |
+| 2 | `networkStatusCheck()` | Poll `CGREG` / `CSQ`; registration lost handling |
+| 3 | `enableGprs()` | PDP + CIP when registered |
 | 4 | `beginNTRIPClient()` | If GPRS up and NTRIP down (30 s retry) |
 | 5 | `handleNTRIPData()` | Read caster TCP → write RTCM to `gpsSerial` |
-| 6 | `monitor_connection_health()` | Stale path, CGREG, NTRIP streak, escalated recover |
-| 7 | `post_telemetry_f()` | Hologram JSON on interval |
-| 8 | Every 5 s | `print_power_status_f()`, `[GPS] fix/rtk/sats` |
+| 6 | `monitorConnectionHealth()` | Stale path, CGREG, NTRIP streak, escalated recover |
+| 7 | `postTelemetry()` | Hologram JSON on interval |
+| 8 | Every 5 s | `printPowerStatus()`, `[GPS] fix/rtk/sats` |
 | 9 | `updateStatusLED()` | LED vs registration/NTRIP |
 | 10 | `gracefulShutdown()` | If GPIO 0 pressed |
 
@@ -66,28 +66,28 @@ On modem failure, sketch blocks in `while(1)`.
 
 | Function | Purpose |
 |----------|---------|
-| `network_status_check_f()` | Registration state; triggers invalidate on confirmed loss |
-| `enable_gprs_f()` | Enable packet data when `CGREG` 1 or 5 |
+| `networkStatusCheck()` | Registration state; triggers invalidate on confirmed loss |
+| `enableGprs()` | Enable packet data when `CGREG` 1 or 5 |
 | `invalidateDataPath()` | Drop NTRIP + GPRS flags — `[DATA] invalidate` |
-| `refreshGprs_f()` | Soft PDP/CIP refresh — `[GPRS] refresh` |
-| `modemRecoverEscalated_f()` | RST then PWRKEY on repeated triggers |
-| `modemHardRecover_f()` / `modemPowerCycleRecover_f()` | Level 1 / 2 recover |
+| `refreshGprs()` | Soft PDP/CIP refresh — `[GPRS] refresh` |
+| `modemRecoverEscalated()` | RST then PWRKEY on repeated triggers |
+| `modemHardRecover()` / `modemPowerCycleRecover()` | Level 1 / 2 recover |
 
 ### NTRIP / GNSS
 
 | Function | Purpose |
 |----------|---------|
 | `beginNTRIPClient()` | HTTP/NTRIP handshake to caster; sets `ntripConnected` |
-| `handleNTRIPData()` | Pump RTCM; updates `lastReceivedRTCM_ms`, `noteCellularActivity()` |
-| `initialize_gnss_uart_f()` | Baud scan, `setPortInput(RTCM3)`, UBX out |
-| `post_telemetry_f()` | Build JSON, close NTRIP, Hologram send, queue NTRIP retry |
+| `handleNTRIPData()` | Pump RTCM; updates `lastReceivedRtcmMs`, `noteCellularActivity()` |
+| `initializeGnssUart()` | Baud scan, `setPortInput(RTCM3)`, UBX out |
+| `postTelemetry()` | Build JSON, close NTRIP, Hologram send, queue NTRIP retry |
 
 ### Sensors / UI
 
 | Function | Purpose |
 |----------|---------|
-| `initialize_ina228_f()` | I2C INA228 on pack bus |
-| `print_power_status_f()` | `[PWR]` bus V, mW, or bench message |
+| `initializeIna228()` | I2C INA228 on pack bus |
+| `printPowerStatus()` | `[PWR]` bus V, mW, or bench message |
 | `updateStatusLED()` | Blink vs solid from net/NTRIP state |
 | `gracefulShutdown()` / `shutdownISR()` | User power-down |
 
@@ -101,7 +101,7 @@ On modem failure, sketch blocks in `while(1)`.
 | `gprsEnabled` | PDP/CIP up |
 | `ntripConnected` | TCP to caster open |
 | `gpsUARTOnline` | ZED UART2 working |
-| `lastReceivedRTCM_ms` | Last RTCM byte time (health grace) |
+| `lastReceivedRtcmMs` | Last RTCM byte time (health grace) |
 | `consecutiveNtripFailures` | Count toward escalated recover |
 | `s_modemRecoverNextPowerCycle` | Next escalated call uses PWRKEY |
 

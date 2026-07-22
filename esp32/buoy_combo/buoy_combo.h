@@ -149,24 +149,23 @@ public:
   bool configureLteCatM(bool afterRecover = false);
   void invalidateCipStack();
   bool configureNetwork(bool afterRecover = false);
+  String buildGGA();
 
 private:
-  bool _cipStackUp = false;
+  bool mCipStackUp = false;
 };
 
 extern bool networkConnected;
 extern bool gprsEnabled;
-extern bool gpsEnabled;
 extern bool ntripConnected;
 extern bool gpsUARTOnline;
-extern unsigned long lastNTRIPAttempt;
-extern unsigned long lastCellularActivity_ms;
-extern unsigned long lastGprsEnabled_ms;
+extern unsigned long lastNtripAttempt;
+extern unsigned long lastCellularActivityMs;
+extern unsigned long lastGprsEnabledMs;
 extern uint8_t consecutiveNtripFailures;
-extern long lastReceivedRTCM_ms;
-extern int maxTimeBeforeHangup_ms;
+extern long lastReceivedRtcmMs;
+extern int maxTimeBeforeHangupMs;
 extern const unsigned long ntripRetryInterval;
-extern long lastGPSPrint;
 extern BuoyModem modem;
 extern HardwareSerial modemSS;
 extern SFE_UBLOX_GNSS myGNSS;
@@ -176,22 +175,22 @@ extern volatile bool shutdownRequested;
 extern bool ina228Online;
 
 // Function declarations
-void network_status_check_f();
-void enable_gprs_f();
-void initialize_gnss_uart_f();
-void initialize_ina228_f();
-void print_power_status_f();
+void networkStatusCheck();
+void enableGprs();
+void initializeGnssUart();
+void initializeIna228();
+void printPowerStatus();
 void beginNTRIPClient();
 void handleNTRIPData();
-void monitor_connection_health();
+void monitorConnectionHealth();
 void noteCellularActivity();
 void invalidateDataPath(const __FlashStringHelper *reason);
-void refreshGprs_f(const __FlashStringHelper *reason);
-bool modemHardRecover_f(const __FlashStringHelper *reason);
-bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
-                              bool bypassCooldown = false);
-void modemRecoverEscalated_f(const __FlashStringHelper *reason);
-void post_telemetry_f();
+void refreshGprs(const __FlashStringHelper *reason);
+bool modemHardRecover(const __FlashStringHelper *reason);
+bool modemPowerCycleRecover(const __FlashStringHelper *reason,
+                             bool bypassCooldown = false);
+void modemRecoverEscalated(const __FlashStringHelper *reason);
+void postTelemetry();
 void printDebugStatus();
 void updateStatusLED();
 void shutdownISR();

@@ -27,9 +27,9 @@ volatile bool bleDataReady = false;
 #include "buoy_combo.h"
 
 // ========================================================
-// TODO: Normalize style: camelCase for functions and vars,
-// m_camelCase for members, ALL_CAPS for macros, 
-// PascalCase for classes, 2 space indentation
+// Style: camelCase for functions and vars, m_camelCase for
+// members, ALL_CAPS for macros, PascalCase for classes,
+// 2 space indentation
 // ========================================================
 
 // BLE output helpers — echo to Serial and BLE simultaneously
@@ -80,16 +80,16 @@ bool ina228Online = false;
 volatile bool shutdownRequested = false;
 
 // Timing
-long lastReceivedRTCM_ms = 0;
-int maxTimeBeforeHangup_ms = 100000;
+long lastReceivedRtcmMs = 0;
+int maxTimeBeforeHangupMs = 100000;
 const unsigned long ntripRetryInterval = 30000;
-unsigned long lastNTRIPAttempt = 0;
-unsigned long lastCellularActivity_ms = 0;
-unsigned long lastGprsEnabled_ms = 0;
+unsigned long lastNtripAttempt = 0;
+unsigned long lastCellularActivityMs = 0;
+unsigned long lastGprsEnabledMs = 0;
 uint8_t consecutiveNtripFailures = 0;
 unsigned long lastFixStatusPrint = 0;
-long lastGPSPrint = 0;
-const unsigned long ggaInterval_ms = 10000;
+const unsigned long ggaIntervalMs = 10000;
+unsigned long lastGgaSentMs = 0;
 
 // Configuration
 char imei[16] = {0};
@@ -100,152 +100,152 @@ char imei[16] = {0};
 
 // TODO: Make actual print msgs and replies more readable
 void BuoyModem::printDiagnostics() {
-    const uint16_t t = 3000;
-    // KH -- SIM PIN status: READY if no password needed, SIM PIN if awaiting password
-    getReply(F("AT+CPIN?"), t);
-    buoyPrint(F("[DIAG] CPIN: "));
-    buoyPrintln(replybuffer);
-    // KH -- Modem Functionality Level: 0 if minimal, 1 if full (this is what you want)
-    getReply(F("AT+CFUN?"), t);
-    buoyPrint(F("[DIAG] CFUN: "));
-    buoyPrintln(replybuffer);
-    // KH -- network registration: 0 if not registered, 1 if registered at home, 5 if roaming
-    getReply(F("AT+CREG?"), t);
-    buoyPrint(F("[DIAG] CREG (circuit): "));
-    buoyPrintln(replybuffer);
-    // KH -- GPRS network registration: 0 if not registered, 1 if registered at home, 5 if roaming (typical)
-    getReply(F("AT+CGREG?"), t);
-    buoyPrint(F("[DIAG] CGREG (LTE data — used by [NET]): "));
-    buoyPrintln(replybuffer);
-    // KH -- Signal quality: 2-31 is proper
-    getReply(F("AT+CSQ"), t);
-    buoyPrint(F("[DIAG] CSQ: "));
-    buoyPrintln(replybuffer);
-    // KH -- GPRS attachment status: 0 if not attached, 1 if attached
-    getReply(F("AT+CGATT?"), t);
-    buoyPrint(F("[DIAG] CGATT: "));
-    buoyPrintln(replybuffer);
-    // KH -- Operator Selection: format is <mode> (0 is auto select, 1 is manual), <format> (0 is long alphanum, 1 is short),
-    // <operator> (Verizon, AT&T, etc), <access technology> (7 for LTE)
-    getReply(F("AT+COPS?"), t);
-    buoyPrint(F("[DIAG] COPS: "));
-    buoyPrintln(replybuffer);
-    // KH -- APP Network Status: format is <mode> (0 for inactive, 1 for active), <access point name> (will give a real IP if connected)
-    getReply(F("AT+CNACT?"), t);
-    buoyPrint(F("[DIAG] CNACT: "));
-    buoyPrintln(replybuffer);
+  const uint16_t t = 3000;
+  // KH -- SIM PIN status: READY if no password needed, SIM PIN if awaiting password
+  getReply(F("AT+CPIN?"), t);
+  buoyPrint(F("[DIAG] CPIN: "));
+  buoyPrintln(replybuffer);
+  // KH -- Modem Functionality Level: 0 if minimal, 1 if full (this is what you want)
+  getReply(F("AT+CFUN?"), t);
+  buoyPrint(F("[DIAG] CFUN: "));
+  buoyPrintln(replybuffer);
+  // KH -- network registration: 0 if not registered, 1 if registered at home, 5 if roaming
+  getReply(F("AT+CREG?"), t);
+  buoyPrint(F("[DIAG] CREG (circuit): "));
+  buoyPrintln(replybuffer);
+  // KH -- GPRS network registration: 0 if not registered, 1 if registered at home, 5 if roaming (typical)
+  getReply(F("AT+CGREG?"), t);
+  buoyPrint(F("[DIAG] CGREG (LTE data — used by [NET]): "));
+  buoyPrintln(replybuffer);
+  // KH -- Signal quality: 2-31 is proper
+  getReply(F("AT+CSQ"), t);
+  buoyPrint(F("[DIAG] CSQ: "));
+  buoyPrintln(replybuffer);
+  // KH -- GPRS attachment status: 0 if not attached, 1 if attached
+  getReply(F("AT+CGATT?"), t);
+  buoyPrint(F("[DIAG] CGATT: "));
+  buoyPrintln(replybuffer);
+  // KH -- Operator Selection: format is <mode> (0 is auto select, 1 is manual), <format> (0 is long alphanum, 1 is short),
+  // <operator> (Verizon, AT&T, etc), <access technology> (7 for LTE)
+  getReply(F("AT+COPS?"), t);
+  buoyPrint(F("[DIAG] COPS: "));
+  buoyPrintln(replybuffer);
+  // KH -- APP Network Status: format is <mode> (0 for inactive, 1 for active), <access point name> (will give a real IP if connected)
+  getReply(F("AT+CNACT?"), t);
+  buoyPrint(F("[DIAG] CNACT: "));
+  buoyPrintln(replybuffer);
 }
 
 // KH -- checks modem activity with AT+CPIN for a specified amount of time, pauses ESP32 for 500ms if not
 bool BuoyModem::waitModemAtReady(uint32_t timeoutMs) {
-    const uint32_t deadline = millis() + timeoutMs;
-    while ((int32_t)(deadline - millis()) > 0) {
-      if (sendCheckReply(F("AT"), ok_reply, 2000)) {
-        getReply(F("AT+CPIN?"), (uint16_t)3000);
-        if (strstr(replybuffer, "READY") != nullptr ||
-            strstr(replybuffer, "SIM PIN") != nullptr) {
-          return true;
-        }
+  const uint32_t deadline = millis() + timeoutMs;
+  while ((int32_t)(deadline - millis()) > 0) {
+    if (sendCheckReply(F("AT"), ok_reply, 2000)) {
+      getReply(F("AT+CPIN?"), (uint16_t)3000);
+      if (strstr(replybuffer, "READY") != nullptr ||
+          strstr(replybuffer, "SIM PIN") != nullptr) {
+        return true;
       }
-      delay(500);
     }
-    return false;
+    delay(500);
+  }
+  return false;
 }
 
 // KH -- Returns true if modem is operating at full functionality via AT+CFUN, sets to full functionality if not,
 // returns false if fails
 bool BuoyModem::ensureRadioOn() {
-    getReply(F("AT+CFUN?"), (uint16_t)3000);
-    if (strstr(replybuffer, ": 1") != nullptr) {
-      return true;
-    }
-    if (sendCheckReply(F("AT+CFUN=1"), ok_reply, 30000)) {
-      delay(2000);
-      return true;
-    }
-    buoyPrintln("[MODEM] CFUN=1 failed");
-    return false;
+  getReply(F("AT+CFUN?"), (uint16_t)3000);
+  if (strstr(replybuffer, ": 1") != nullptr) {
+    return true;
+  }
+  if (sendCheckReply(F("AT+CFUN=1"), ok_reply, 30000)) {
+    delay(2000);
+    return true;
+  }
+  buoyPrintln("[MODEM] CFUN=1 failed");
+  return false;
 }
 
 // KH -- tries to set CAT-M band to preferred settings and tries fallbacks, returns true if successful
 bool BuoyModem::applyLteCatMBandSettings() {
-    bool ok = true;
-    if (!setPreferredMode(38)) {
-      buoyPrintln("[MODEM] setPreferredMode(38) failed");
+  bool ok = true;
+  if (!setPreferredMode(38)) {
+    buoyPrintln("[MODEM] setPreferredMode(38) failed");
+    ok = false;
+  }
+  if (!setPreferredLTEMode(1)) {
+    buoyPrintln("[MODEM] setPreferredLTEMode(1) failed");
+    ok = false;
+  }
+
+  char bandCmd[48];
+  snprintf(bandCmd, sizeof(bandCmd), "AT+CBANDCFG=\"CAT-M\",%d", LTE_CATM_BAND);
+  if (!sendCheckReply(bandCmd, ok_reply, 8000)) {
+    buoyPrintln("[MODEM] CBANDCFG band " + String(LTE_CATM_BAND) + " failed — trying US 2,4,12,13");
+    buoyPrintln("[MODEM] CBANDCFG fallback 2,4,12,13");
+    if (!sendCheckReply(LTE_CATM_US_FALLBACK, ok_reply, 8000)) {
       ok = false;
     }
-    if (!setPreferredLTEMode(1)) {
-      buoyPrintln("[MODEM] setPreferredLTEMode(1) failed");
-      ok = false;
-    }
+  }
 
-    char bandCmd[48];
-    snprintf(bandCmd, sizeof(bandCmd), "AT+CBANDCFG=\"CAT-M\",%d", LTE_CATM_BAND);
-    if (!sendCheckReply(bandCmd, ok_reply, 8000)) {
-      buoyPrintln("[MODEM] CBANDCFG band " + String(LTE_CATM_BAND) + " failed — trying US 2,4,12,13");
-      buoyPrintln("[MODEM] CBANDCFG fallback 2,4,12,13");
-      if (!sendCheckReply(LTE_CATM_US_FALLBACK, ok_reply, 8000)) {
-        ok = false;
-      }
-    }
+  sendCheckReply(F("AT+CGREG=2"), ok_reply, 3000);
 
-    sendCheckReply(F("AT+CGREG=2"), ok_reply, 3000);
+  getReply(F("AT+CBANDCFG?"), (uint16_t)3000);
+  buoyPrintln("[MODEM] CBANDCFG: " + String(replybuffer));
 
-    getReply(F("AT+CBANDCFG?"), (uint16_t)3000);
-    buoyPrintln("[MODEM] CBANDCFG: " + String(replybuffer));
-
-    return ok;
+  return ok;
 }
 
 // KH -- if booting, applies CAT-M band settings and ensures radio is on. if recovering, checks 
 // if functionality is minimal (required for band reconfig) beforehand
 bool BuoyModem::configureLteCatM(bool afterRecover) {
-    buoyPrintln("[MODEM] LTE CAT-M, band " + String(LTE_CATM_BAND) + (afterRecover ? " (recover)" : " (boot)"));
-    if (afterRecover) {
-      if (!sendCheckReply(F("AT+CFUN=0"), ok_reply, 10000) && ensureRadioOn()) {
-        buoyPrintln("[MODEM] CFUN=0 failed (recover band config)");
-        return false;
-      }
-      delay(1500);
+  buoyPrintln("[MODEM] LTE CAT-M, band " + String(LTE_CATM_BAND) + (afterRecover ? " (recover)" : " (boot)"));
+  if (afterRecover) {
+    if (!sendCheckReply(F("AT+CFUN=0"), ok_reply, 10000) && ensureRadioOn()) {
+      buoyPrintln("[MODEM] CFUN=0 failed (recover band config)");
+      return false;
     }
+    delay(1500);
+  }
 
-    const bool ok = applyLteCatMBandSettings();
-    ensureRadioOn();
-    return ok;
+  const bool ok = applyLteCatMBandSettings();
+  ensureRadioOn();
+  return ok;
 }
 
 // KH -- forces CIP stack rebuild
-void BuoyModem::invalidateCipStack() { _cipStackUp = false; }
+void BuoyModem::invalidateCipStack() { mCipStackUp = false; }
 
 // KH -- First checks modem operational status, then configures functionality, provider, LTE band,
 // GPS attachment, error reporting, and DNS
 bool BuoyModem::configureNetwork(bool afterRecover) {
-    if (!waitModemAtReady()) {
-      buoyPrintln("[MODEM] WARN: modem not AT-ready before config");
-    }
- 
-    if (!afterRecover) {
-      setFunctionality(1);
-      delay(2000);
-    }
- 
-    setNetworkSettings(F("hologram"));
- 
-    bool ok = configureLteCatM(afterRecover);
-    if (!ok) {
-      buoyPrintln("[MODEM] WARN: LTE CAT-M band config failed");
-    }
- 
-    ensureRadioOn();
- 
-    sendCheckReply(F("AT+CGATT=1"), ok_reply, 15000);
-    sendCheckReply(F("AT+COPS=0"), ok_reply, 60000);
-    sendCheckReply(F("AT+CMEE=2"), ok_reply, 3000);
-    sendCheckReply(F("AT+CDNSCFG=1,\"8.8.8.8\",\"1.1.1.1\""), ok_reply, 5000);
- 
-    buoyPrintln("[MODEM] post-config diagnostics:");
-    printDiagnostics();
-    return ok;
+  if (!waitModemAtReady()) {
+    buoyPrintln("[MODEM] WARN: modem not AT-ready before config");
+  }
+
+  if (!afterRecover) {
+    setFunctionality(1);
+    delay(2000);
+  }
+
+  setNetworkSettings(F("hologram"));
+
+  bool ok = configureLteCatM(afterRecover);
+  if (!ok) {
+    buoyPrintln("[MODEM] WARN: LTE CAT-M band config failed");
+  }
+
+  ensureRadioOn();
+
+  sendCheckReply(F("AT+CGATT=1"), ok_reply, 15000);
+  sendCheckReply(F("AT+COPS=0"), ok_reply, 60000);
+  sendCheckReply(F("AT+CMEE=2"), ok_reply, 3000);
+  sendCheckReply(F("AT+CDNSCFG=1,\"8.8.8.8\",\"1.1.1.1\""), ok_reply, 5000);
+
+  buoyPrintln("[MODEM] post-config diagnostics:");
+  printDiagnostics();
+  return ok;
 }
 
 // SAPBR is the legacy GPRS bearer the B03/B05 firmware needs for AT+HTTP* + AT+HTTPSSL.
@@ -269,7 +269,7 @@ bool BuoyModem::bringUpCipStack() {
   //   CSTT="<apn>"
   //   CIICR
   //   CIFSR    (must return an IP literal)
-  if (_cipStackUp) return true;
+  if (mCipStackUp) return true;
 
   // CIPSHUT may deactivate CNACT; caller re-activates after.
   sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
@@ -287,7 +287,7 @@ bool BuoyModem::bringUpCipStack() {
   getReply(F("AT+CIFSR"), (uint16_t)5000);
   if (strstr(replybuffer, "ERROR") || !strchr(replybuffer, '.')) return false;
 
-  _cipStackUp = true;
+  mCipStackUp = true;
   return true;
 }
 
@@ -406,11 +406,58 @@ bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
   return ok;
 }
 
+String BuoyModem::buildGGA() {
+  // One PVT poll caches every NAV-PVT field used below; subsequent getters return
+  // cached values instead of issuing eight separate UART polls that each block
+  // RTCM injection to the F9P.
+  myGNSS.getPVT();
+
+  double lat = myGNSS.getLatitude()    / 10000000.0;
+  double lon = myGNSS.getLongitude()   / 10000000.0;
+  double alt = myGNSS.getAltitudeMSL() / 1000.0;
+  uint8_t fix     = myGNSS.getFixType();
+  uint8_t siv     = myGNSS.getSIV();
+  uint8_t carrier = myGNSS.getCarrierSolutionType();
+  uint8_t h = myGNSS.getHour();
+  uint8_t m = myGNSS.getMinute();
+  uint8_t s = myGNSS.getSecond();
+
+  // GGA quality indicator: 0=no fix, 1=GPS, 4=RTK Fixed, 5=RTK Float
+  int quality = 0;
+  if (fix >= 2) {
+    if      (carrier == 2) quality = 4;
+    else if (carrier == 1) quality = 5;
+    else                   quality = 1;
+  }
+
+  char latDir = (lat >= 0) ? 'N' : 'S';
+  double absLat = fabs(lat);
+  int latDeg    = (int)absLat;
+  double latMin = (absLat - latDeg) * 60.0;
+
+  char lonDir = (lon >= 0) ? 'E' : 'W';
+  double absLon = fabs(lon);
+  int lonDeg    = (int)absLon;
+  double lonMin = (absLon - lonDeg) * 60.0;
+
+  char body[128];
+  snprintf(body, sizeof(body),
+    "GPGGA,%02d%02d%02d.00,%02d%07.4f,%c,%03d%07.4f,%c,%d,%02d,1.0,%.2f,M,0.0,M,,",
+    h, m, s, latDeg, latMin, latDir, lonDeg, lonMin, lonDir, quality, siv, alt);
+
+  uint8_t checksum = 0;
+  for (int i = 0; body[i]; i++) checksum ^= (uint8_t)body[i];
+
+  char sentence[140];
+  snprintf(sentence, sizeof(sentence), "$%s*%02X\r\n", body, checksum);
+  return (String)sentence;
+}
+
 // ============================================================
 // Free function implementations
 // ============================================================
 
-void initialize_gnss_uart_f() {
+void initializeGnssUart() {
   buoyPrintln("=== Initializing ZED-F9P via UART ===");
   buoyPrintln("TX_GPS pin: " + String (TX_GPS));
   buoyPrintln("RX_GPS pin: " + String (RX_GPS));
@@ -458,7 +505,7 @@ void initialize_gnss_uart_f() {
   gpsUARTOnline = false;
 }
 
-void initialize_ina228_f() {
+void initializeIna228() {
   buoyPrintln("=== Initializing INA228 (I2C) ===");
   Wire.begin(I2C_SDA, I2C_SCL);
 
@@ -473,7 +520,7 @@ void initialize_ina228_f() {
   buoyPrintln("INA228 OK");
 }
 
-void print_power_status_f() {
+void printPowerStatus() {
   if (!ina228Online) {
     return;
   }
@@ -505,7 +552,7 @@ void ntripAttemptFailed() {
 }
 
 void noteCellularActivity() {
-  lastCellularActivity_ms = millis();
+  lastCellularActivityMs = millis();
 }
 
 void invalidateDataPath(const __FlashStringHelper *reason) {
@@ -521,10 +568,10 @@ void invalidateDataPath(const __FlashStringHelper *reason) {
     modem.enableGPRS(false);
     gprsEnabled = false;
   }
-  lastNTRIPAttempt = 0;
+  lastNtripAttempt = 0;
 }
 
-void refreshGprs_f(const __FlashStringHelper *reason) {
+void refreshGprs(const __FlashStringHelper *reason) {
   static unsigned long lastRefreshMs = 0;
 
   if (millis() - lastRefreshMs < GPRS_REFRESH_COOLDOWN_MS) {
@@ -578,7 +625,7 @@ void modemPwrkeyPowerOff() {
   digitalWrite(BOTLETICS_PWRKEY, HIGH);
 }
 
-bool modemHardRecover_f(const __FlashStringHelper *reason) {
+bool modemHardRecover(const __FlashStringHelper *reason) {
   static unsigned long lastHardMs = 0;
 
   if (millis() - lastHardMs < MODEM_HARD_RECOVER_COOLDOWN_MS) {
@@ -610,7 +657,7 @@ bool modemHardRecover_f(const __FlashStringHelper *reason) {
   return false;
 }
 
-bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
+bool modemPowerCycleRecover(const __FlashStringHelper *reason,
                               bool bypassCooldown) {
   static unsigned long lastPowerCycleMs = 0;
 
@@ -655,12 +702,12 @@ bool modemPowerCycleRecover_f(const __FlashStringHelper *reason,
 
 static bool s_modemRecoverNextPowerCycle = false;
 
-void modemRecoverEscalated_f(const __FlashStringHelper *reason) {
-  if (modemPowerCycleRecover_f(reason, false)) {
+void modemRecoverEscalated(const __FlashStringHelper *reason) {
+  if (modemPowerCycleRecover(reason, false)) {
     return;
   }
   buoyPrintln("[MODEM] power cycle failed — trying RST recover");
-  modemHardRecover_f(reason);
+  modemHardRecover(reason);
 }
 
 void modemRecoverEscalationReset() {
@@ -687,9 +734,9 @@ void modemRecoverEscalationMaybeReset(uint8_t cgregStat) {
 
 bool cellularLinkAlive() {
   return (ntripConnected &&
-          (millis() - lastReceivedRTCM_ms < (long)CELLULAR_LINK_ALIVE_MS)) ||
-         (lastCellularActivity_ms > 0 &&
-          (millis() - lastCellularActivity_ms < CELLULAR_LINK_ALIVE_MS));
+          (millis() - lastReceivedRtcmMs < (long)CELLULAR_LINK_ALIVE_MS)) ||
+         (lastCellularActivityMs > 0 &&
+          (millis() - lastCellularActivityMs < CELLULAR_LINK_ALIVE_MS));
 }
 
 // CGREG can read 0 transiently while the CIP/NTRIP socket is still delivering RTCM.
@@ -707,7 +754,7 @@ bool cgregLossConfirmed(uint8_t n) {
   return badStreak >= CGREG_BAD_STREAK_LIMIT;
 }
 
-void network_status_check_f() {
+void networkStatusCheck() {
   static unsigned long lastCheckMs = 0;
   static unsigned long lastDiagMs = 0;
   static unsigned long lastCgregIgnoreLogMs = 0;
@@ -760,7 +807,7 @@ void network_status_check_f() {
     }
   }
 
-  // monitor_connection_health() returns immediately when !networkConnected, so
+  // monitorConnectionHealth() returns immediately when !networkConnected, so
   // a modem stuck at CSQ=0 / CGREG=0 would never reach hard-recover otherwise.
   static unsigned long unregisteredSinceMs = 0;
   static unsigned long lastForcedFullCycleMs = 0;
@@ -775,7 +822,7 @@ void network_status_check_f() {
           millis() - lastForcedFullCycleMs >= MODEM_STUCK_FORCE_CYCLE_MS) {
         lastForcedFullCycleMs = millis();
         buoyPrintln("[MODEM] prolonged unregistered — forced power cycle");
-        modemPowerCycleRecover_f(F("prolonged unregistered"), true);
+        modemPowerCycleRecover(F("prolonged unregistered"), true);
         unregisteredSinceMs = millis();
       } else {
         const unsigned long limit =
@@ -784,14 +831,14 @@ void network_status_check_f() {
                 : UNREGISTERED_HARD_RECOVER_MS;
         if (unregDuration >= limit) {
           unregisteredSinceMs = millis();
-          modemRecoverEscalated_f(F("registration timeout"));
+          modemRecoverEscalated(F("registration timeout"));
         }
       }
     }
   }
 }
 
-void post_telemetry_f() {
+void postTelemetry() {
   if (hologramDeviceKey[0] == '\0') {
     return;
   }
@@ -908,11 +955,11 @@ void post_telemetry_f() {
     noteCellularActivity();
   }
   if (ntripConnected) {
-    lastNTRIPAttempt = 0;
+    lastNtripAttempt = 0;
   }
 }
 
-void enable_gprs_f() {
+void enableGprs() {
   if (!networkConnected || gprsEnabled) return;
 
   // Poor signal: try again next loop
@@ -934,7 +981,7 @@ void enable_gprs_f() {
   for (int attempt = 1; attempt <= 3; attempt++) {
     if (modem.enableGPRS(true)) {
       gprsEnabled = true;
-      lastGprsEnabled_ms = millis();
+      lastGprsEnabledMs = millis();
       noteCellularActivity();
       consecutiveNtripFailures = 0;
       buoyPrintln("[GPRS] enabled");
@@ -1024,8 +1071,13 @@ void beginNTRIPClient() {
     buoyPrintln("[NTRIP] connected");
     ntripConnected = true;
     consecutiveNtripFailures = 0;
-    lastReceivedRTCM_ms = millis();
+    lastReceivedRtcmMs = millis();
     noteCellularActivity();
+
+    String gga = modem.buildGGA();
+    modem.tcpSendPlain(gga.c_str(), gga.length());
+    lastGgaSentMs = millis();
+    buoyPrintln("[NTRIP] GGA Sent");
   } else if (unauth) {
     buoyPrintln("[NTRIP] 401 unauthorized");
     modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
@@ -1047,7 +1099,7 @@ void handleNTRIPData() {
   uint16_t available = modem.TCPavailable();
 
   if (available == 0) {
-    if (millis() - lastReceivedRTCM_ms > maxTimeBeforeHangup_ms) {
+    if (millis() - lastReceivedRtcmMs > maxTimeBeforeHangupMs) {
       buoyPrintln("[NTRIP] RTCM timeout, disconnecting");
       modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
       ntripConnected = false;
@@ -1072,7 +1124,7 @@ void handleNTRIPData() {
   }
 
   if (totalSent > 0) {
-    lastReceivedRTCM_ms = millis();
+    lastReceivedRtcmMs = millis();
     noteCellularActivity();
   }
 
@@ -1086,9 +1138,17 @@ void handleNTRIPData() {
     buoyPrint(" B/10s backlog="); buoyPrintln(modem.TCPavailable());
     bytesSinceReport = 0;
   }
+
+  if (millis() - lastGgaSentMs > ggaIntervalMs)
+  {
+    String gga = modem.buildGGA();
+    modem.tcpSendPlain(gga.c_str(), gga.length());
+    lastGgaSentMs = millis();
+    buoyPrintln("[NTRIP] GGA Sent");
+  }
 }
 
-void monitor_connection_health() {
+void monitorConnectionHealth() {
   if (!networkConnected) return;
 
   static unsigned long lastHealthCheck = 0;
@@ -1126,29 +1186,29 @@ void monitor_connection_health() {
   // read 0.0.0.0 while RTCM is flowing. Only refresh when there is no recent payload.
   if (gprsEnabled && !modem.wirelessConnStatus()) {
     if (!cellularLinkAlive()) {
-      refreshGprs_f(F("PDP inactive"));
+      refreshGprs(F("PDP inactive"));
       return;
     }
   }
 
   if (gprsEnabled) {
-    unsigned long activityMs = lastCellularActivity_ms;
+    unsigned long activityMs = lastCellularActivityMs;
     if (activityMs == 0) {
-      activityMs = lastGprsEnabled_ms;
+      activityMs = lastGprsEnabledMs;
     }
     const bool expectingData =
         ntripConnected ||
-        (millis() - lastNTRIPAttempt < ntripRetryInterval * 2UL);
+        (millis() - lastNtripAttempt < ntripRetryInterval * 2UL);
     if (expectingData && activityMs > 0 &&
         millis() - activityMs > DATA_PATH_STALE_MS) {
-      refreshGprs_f(F("data path stale"));
+      refreshGprs(F("data path stale"));
       return;
     }
   }
 
   if (!ntripConnected && gprsEnabled &&
       consecutiveNtripFailures >= NTRIP_FAILURES_BEFORE_HARD_RESET) {
-    modemRecoverEscalated_f(F("NTRIP failures"));
+    modemRecoverEscalated(F("NTRIP failures"));
   }
 }
 
@@ -1159,16 +1219,16 @@ void printDebugStatus() {
   buoyPrintln(networkConnected ? "true" : "false");
   buoyPrint("gprsEnabled = ");
   buoyPrintln(gprsEnabled ? "true" : "false");
-  buoyPrint("gpsEnabled = ");
-  buoyPrintln(gpsEnabled ? "true" : "false");
+  buoyPrint("gpsUARTOnline = ");
+  buoyPrintln(gpsUARTOnline ? "true" : "false");
   buoyPrint("ntripConnected = ");
   buoyPrintln(ntripConnected ? "true" : "false");
-  buoyPrint("lastNTRIPAttempt = ");
-  buoyPrintln(lastNTRIPAttempt);
+  buoyPrint("lastNtripAttempt = ");
+  buoyPrintln(lastNtripAttempt);
   buoyPrint("millis() = ");
   buoyPrintln(millis());
   buoyPrint("Time since last attempt = ");
-  buoyPrintln(millis() - lastNTRIPAttempt);
+  buoyPrintln(millis() - lastNtripAttempt);
   buoyPrintln("=== END DEBUG STATUS ===");
 }
 
@@ -1292,7 +1352,7 @@ void handleBLECommand(String cmd) {
   } else if (cmdUpper == "RESET") {
     buoyPrintln("Resetting NTRIP connection...");
     ntripConnected = false;
-    lastNTRIPAttempt = 0;
+    lastNtripAttempt = 0;
 
   // --- SLEEP ---
   } else if (cmdUpper == "SLEEP") {
@@ -1315,6 +1375,8 @@ void handleBLECommand(String cmd) {
 // ============================================================
 void broadcastGPS() {
   if (!bleConnected) return;
+  if (!myGNSS.getPVT()) return;
+  
   float lat     = myGNSS.getLatitude()        / 10000000.0;
   float lon     = myGNSS.getLongitude()       / 10000000.0;
   float alt     = myGNSS.getAltitudeMSL()     / 1000.0;
@@ -1368,8 +1430,8 @@ void setup() {
   pinMode(SHUTDOWN_BTN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(SHUTDOWN_BTN), shutdownISR, FALLING);
 
-  initialize_ina228_f();
-  initialize_gnss_uart_f();
+  initializeIna228();
+  initializeGnssUart();
 
   // Initialize Modem
   pinMode(RST, OUTPUT);
@@ -1419,14 +1481,14 @@ void loop() {
   }
   
   // Network management
-  network_status_check_f();
-  enable_gprs_f();
+  networkStatusCheck();
+  enableGprs();
   
   // NTRIP connection management
   if (gprsEnabled && !ntripConnected && 
-      (millis() - lastNTRIPAttempt > ntripRetryInterval)) {
+      (millis() - lastNtripAttempt > ntripRetryInterval)) {
     beginNTRIPClient();
-    lastNTRIPAttempt = millis();
+    lastNtripAttempt = millis();
   }
 
   // Handle NTRIP data (receives RTCM and sends to GPS via UART)
@@ -1434,18 +1496,18 @@ void loop() {
     handleNTRIPData();
   }
   
-  monitor_connection_health();
+  monitorConnectionHealth();
 
   if (gprsEnabled) {
-    post_telemetry_f();
+    postTelemetry();
   }
 
   // Power + GPS status every 5 seconds
   if (millis() - lastFixStatusPrint > 5000) {
     lastFixStatusPrint = millis();
-    print_power_status_f();
+    printPowerStatus();
 
-    if (gpsUARTOnline && myGNSS.getPVT()) {  // single poll, populates everything below
+    if (gpsUARTOnline) {  // single poll, populates everything below
       broadcastGPS();
     }
   }

@@ -285,15 +285,15 @@ The buoy sends `{"k":"<deviceKey>","d":"<jsonTelemetry>"}\n\n` over a plain TCP 
 
 Each `loop()` iteration:
 
-1. Network registration and GPRS (`network_status_check_f`, `enable_gprs_f`)
+1. Network registration and GPRS (`networkStatusCheck`, `enableGprs`)
 2. NTRIP connect/retry and RTCM relay (`beginNTRIPClient`, `handleNTRIPData`)
-3. Connection health monitoring (`monitor_connection_health`)
+3. Connection health monitoring (`monitorConnectionHealth`)
    - CGREG checked every 30 s — transient drops ignored while RTCM flows (2 min grace)
    - GPRS refreshed if no data for 5 min (`DATA_PATH_STALE_MS`)
    - **Escalated modem recovery:** RST hard recover (1st trigger) → PWRKEY power cycle (2nd trigger)
    - Triggers: unregistered **5–10 min**, or **10** consecutive NTRIP failures
    - Full conditions and cooldowns: [`documentation/failure-paths.md`](documentation/failure-paths.md)
-4. Telemetry on interval (`post_telemetry_f`, default 60 s):
+4. Telemetry on interval (`postTelemetry`, default 60 s):
    - Polls ZED-F9P PVT, INA228 power, modem RSSI
    - Sends Hologram Cloud Socket message
    - NTRIP socket closed briefly during POST to avoid AT conflicts

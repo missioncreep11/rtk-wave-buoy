@@ -29,7 +29,7 @@ The repository keeps older ESP32 sketches under `esp32/legacy/` for reference. *
 Common traits:
 
 - **No** Hologram Cloud Socket telemetry pipeline
-- **No** `monitor_connection_health` / RST→PWRKEY escalation
+- **No** `monitorConnectionHealth` / RST→PWRKEY escalation
 - **WiFi** range limits for field buoys
 - Polaris sketches implement **Ntrip/2.0** and **GGA** refresh — different from plain TCP `buoy_combo` caster profile
 

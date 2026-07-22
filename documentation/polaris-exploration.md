@@ -127,7 +127,7 @@ Interpretation: LTE registered → Polaris handshake OK → RTCM flowing → int
 | `[NTRIP] connected` but `rtk=none` | GGA missing, wrong HTTP profile, or stale RTCM | Plain `buoy_combo` without GGA/chunked will not work reliably on Polaris. |
 | `rtk=FIXED` → `rtk=none`, NTRIP still up, `[RTCM]` ~4–5 KB/s | **RTK lock lost**, not network | `fix=3` unchanged; modem healthy. Suspects: **modem RX backlog** (FIFO stale corrections), multipath, VRS/GGA drift, ZED timeout. |
 | `backlog=1500–2800` steady | ESP reads slower than caster sends | `[RTCM]` reports `modem.TCPavailable()` — queue never drains. Catch-up drain was added in reverted `ntrip_profile.h` but backlog often stayed high. |
-| Second `[NTRIP] connecting...` after `[TELEM] Hologram OK` | Telemetry closes NTRIP socket for Hologram HTTP | Expected in current `post_telemetry_f()` design; can disturb RTK if reconnect is slow. |
+| Second `[NTRIP] connecting...` after `[TELEM] Hologram OK` | Telemetry closes NTRIP socket for Hologram HTTP | Expected in current `postTelemetry()` design; can disturb RTK if reconnect is slow. |
 
 ### Log tags to search
 
@@ -195,7 +195,7 @@ These are the main reasons “Polaris works on WiFi” but “LTE + Polaris + te
 | Issue | Detail |
 |-------|--------|
 | **Dual stack** | NTRIP uses legacy `AT+CIP*`; Hologram uses `CNACT` + Botletics HTTP. `CIPSHUT` during NTRIP retry can kill the PDP Hologram needs. |
-| **Telemetry vs NTRIP** | `post_telemetry_f()` may **close the NTRIP socket** before opening Hologram — fine for plain casters, painful for Polaris (re-handshake + GGA). |
+| **Telemetry vs NTRIP** | `postTelemetry()` may **close the NTRIP socket** before opening Hologram — fine for plain casters, painful for Polaris (re-handshake + GGA). |
 | **FIFO backlog** | Modem buffers RTCM if the main loop is slow (telemetry, drain, health checks). ZED may see **stale** corrections → `rtk=FIXED` drops while `[NTRIP] connected`. |
 | **No GGA in shipped build** | Production `beginNTRIPClient()` cannot satisfy VRS long-term. |
 

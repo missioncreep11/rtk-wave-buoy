@@ -38,7 +38,7 @@ ESP32 UART2 (GNSS)           ZED-F9P UART1 pads
   GPIO 27 RX  ◄───────────── TX1 / MISO
 ```
 
-- GNSS UART is probed at 38400, 115200, 230400, 460800 in `initialize_gnss_uart_f()`.
+- GNSS UART is probed at 38400, 115200, 230400, 460800 in `initializeGnssUart()`.
 - RTCM3 is enabled on ZED **UART1** input; UBX output on UART1 for PVT polling.
 
 ---
@@ -66,7 +66,7 @@ BT2 (3S2P, 75 Wh) ──┘         ~150 Wh total              │
 
 - **2× 75 Wh** Li-ion **3S2P** packs in **parallel** (~**150 Wh**).
 - INA228 on the **pack bus** (see [hardware-spec.md](hardware-spec.md)).
-- On **USB bench power**, `bus_v` in telemetry may not reflect packs — serial shows a bench note via `print_power_status_f()`.
+- On **USB bench power**, `bus_v` in telemetry may not reflect packs — serial shows a bench note via `printPowerStatus()`.
 
 ---
 
