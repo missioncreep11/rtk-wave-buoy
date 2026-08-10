@@ -63,7 +63,6 @@ const char hologramDeviceKey[] = "";
 // #define TX_GPS 12    // ESP32 TX2 to GPS RX
 // #define RX_GPS 27    // ESP32 RX2 to GPS TX
 
-
 // Global Objects
 HardwareSerial modemSS(1);     // UART1 to modem
 HardwareSerial gpsSerial(2);   // UART2 to GPS
@@ -90,6 +89,14 @@ uint8_t consecutiveNtripFailures = 0;
 unsigned long lastFixStatusPrint = 0;
 const unsigned long ggaIntervalMs = 10000;
 unsigned long lastGgaSentMs = 0;
+
+// NTRIP chunked stream buffer. Bytes pulled from the modem with block
+// tcpRead() calls land here; the chunked decoder peels one byte at a time off
+// the buffer exactly like the WiFi reference does off a WiFiClient. The buffer
+// is seeded with any overflow captured while reading the HTTP response headers.
+static uint8_t ntripStreamBuf[2048];
+static uint16_t ntripStreamLen = 0;
+static uint16_t ntripStreamPos = 0;
 
 // Configuration
 char imei[16] = {0};
@@ -215,7 +222,7 @@ bool BuoyModem::configureLteCatM(bool afterRecover) {
 }
 
 // KH -- forces CIP stack rebuild
-void BuoyModem::invalidateCipStack() { mCipStackUp = false; }
+void BuoyModem::invalidateCipStack() { m_CipStackUp = false; }
 
 // KH -- First checks modem operational status, then configures functionality, provider, LTE band,
 // GPS attachment, error reporting, and DNS
@@ -264,19 +271,45 @@ bool BuoyModem::bringUpCipStack() {
   // The CIPSTART/CIPSEND/CIPRXGET stack is independent of CNACT.
   // Required order on SIM7000:
   //   CIPSHUT  -> IP INITIAL  (so CIPMUX/CIPRXGET can be set)
-  //   CIPMUX=0
+  //   CIPMUX=1   (multi-connection: 0=NTRIP RTCM, 1=Hologram telemetry)
   //   CIPRXGET=1
   //   CSTT="<apn>"
   //   CIICR
   //   CIFSR    (must return an IP literal)
-  if (mCipStackUp) return true;
+  if (m_CipStackUp) return true;
 
   // CIPSHUT may deactivate CNACT; caller re-activates after.
   sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
+  // SIM7000 only accepts CIPMUX/CIPRXGET in IP INITIAL; sending them in the
+  // instant after CIPSHUT often returns ERROR, so let the stack settle first.
+  delay(300);
 
-  // CIPMUX / CIPRXGET only accepted in IP INITIAL state; tolerate either way.
-  sendCheckReply(F("AT+CIPMUX=0"),   ok_reply, 5000);
+  // CIPMUX / CIPRXGET only stick in IP INITIAL. A CIPRXGET=0 socket delivers
+  // incoming bytes as +IPD URCs that get discarded by flushInput() — the
+  // classic "connected but zero RTCM" failure — so this MUST be verified, not
+  // tolerated.
+  bool muxSet = false;
+  for (int i = 0; i < 3 && !muxSet; i++) {
+    muxSet = sendCheckReply(F("AT+CIPMUX=1"), ok_reply, 5000);
+    if (!muxSet) delay(200);
+  }
   sendCheckReply(F("AT+CIPRXGET=1"), ok_reply, 5000);
+
+  getReply(F("AT+CIPMUX?"), (uint16_t)3000);
+  char muxResp[24];
+  snprintf(muxResp, sizeof(muxResp), "%s", replybuffer);
+  const bool muxOk = (strstr(replybuffer, ": 1") != nullptr);
+
+  getReply(F("AT+CIPRXGET?"), (uint16_t)3000);
+  const bool rxGetOk = (strstr(replybuffer, ": 1") != nullptr);
+
+  buoyPrint("[CIP] MUX="); buoyPrintln(muxResp);
+  buoyPrint("[CIP] RXGET="); buoyPrintln(replybuffer);
+  if (!muxOk || !rxGetOk) {
+    buoyPrintln("[CIP] CIPMUX/CIPRXGET not applied — invalidating stack for retry");
+    invalidateCipStack();
+    return false;
+  }
 
   // CSTT may already be set from a prior bring-up; tolerate ERROR.
   sendCheckReply(F("AT+CSTT=\"hologram\""), ok_reply, 10000);
@@ -287,23 +320,23 @@ bool BuoyModem::bringUpCipStack() {
   getReply(F("AT+CIFSR"), (uint16_t)5000);
   if (strstr(replybuffer, "ERROR") || !strchr(replybuffer, '.')) return false;
 
-  mCipStackUp = true;
+  m_CipStackUp = true;
   return true;
 }
 
-bool BuoyModem::tcpConnectPlain(const char *server, uint16_t port) {
+bool BuoyModem::tcpConnectPlain(uint8_t linkId, const char *server, uint16_t port) {
   // Best-effort socket cleanup; ignore errors when no socket is open.
-  getReply(F("AT+CIPCLOSE"), (uint16_t)2000);
+  getReply(F("AT+CIPCLOSE="), (int32_t)linkId, (uint16_t)2000);
 
   // Bring up the legacy CIPSTART stack. CIPSHUT inside may kill CNACT, restored below.
   if (!bringUpCipStack()) return false;
   ensurePdpActive();
 
   char cmd[128];
-  snprintf(cmd, sizeof(cmd), "AT+CIPSTART=\"TCP\",\"%s\",%u", server, port);
+  snprintf(cmd, sizeof(cmd), "AT+CIPSTART=%u,\"TCP\",\"%s\",%u", linkId, server, port);
   if (!sendCheckReply(cmd, ok_reply, 60000)) return false;
 
-  // CIPSTART returns OK first, then CONNECT OK / ALREADY CONNECT / CONNECT FAIL / STATE: PDP DEACT.
+  // CIPSTART returns OK first, then <id>, CONNECT OK / ALREADY CONNECT / CONNECT FAIL / STATE: PDP DEACT.
   uint32_t deadline = millis() + 75000;
   while ((int32_t)(deadline - millis()) > 0) {
     readline(2000);
@@ -318,18 +351,22 @@ bool BuoyModem::tcpConnectPlain(const char *server, uint16_t port) {
   return false;
 }
 
-bool BuoyModem::tcpConnectedPlain() {
-  if (!sendCheckReply(F("AT+CIPSTATUS"), ok_reply, 100)) return false;
-  readline(100);
-  return (strcmp(replybuffer, "STATE: CONNECT OK") == 0);
+bool BuoyModem::tcpConnectedPlain(uint8_t linkId) {
+  char cmd[24];
+  snprintf(cmd, sizeof(cmd), "AT+CIPSTATUS=%u", linkId);
+  getReply(cmd, (uint16_t)200);
+  // Per-link status: +CIPSTATUS: <id>,<status>,"TCP","host","port","CONNECTED"
+  return (strstr(replybuffer, "CONNECTED") != nullptr);
 }
 
-bool BuoyModem::tcpSendPlain(const char *packet, uint16_t len) {
+bool BuoyModem::tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len) {
   flushInput();
 
-  // AT+CIPSEND=<len> -- modem replies with ">" then waits for exactly <len> bytes.
+  // AT+CIPSEND=<id>,<len> -- modem replies with ">" then waits for exactly <len> bytes.
   // Cannot use sendCheckReply() here: it expects "OK" but the response is "> ".
   mySerial->print(F("AT+CIPSEND="));
+  mySerial->print(linkId);
+  mySerial->print(',');
   mySerial->println(len);
 
   uint32_t deadline = millis() + 5000;
@@ -362,36 +399,137 @@ bool BuoyModem::tcpSendPlain(const char *packet, uint16_t len) {
   return false;
 }
 
+bool BuoyModem::tcpClosePlain(uint8_t linkId) {
+  flushInput();
+  char cmd[24];
+  snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE=%u", linkId);
+  mySerial->println(cmd);
+
+  // Multi-connection close replies "<id>,CLOSE OK" (or ERROR if link never opened).
+  uint32_t deadline = millis() + 5000;
+  while ((int32_t)(deadline - millis()) > 0) {
+    readline(1000);
+    if (replybuffer[0] == 0) continue;
+    if (strstr(replybuffer, "CLOSE OK")) return true;
+    if (strstr(replybuffer, "ERROR")) return true;  // already closed is fine
+  }
+  return false;
+}
+
+uint16_t BuoyModem::tcpAvailable(uint8_t linkId) {
+  // CIPRXGET=4,<id> -> "+CIPRXGET: 4,<id>,<len>" then OK.
+  uint16_t avail = 0;
+  getReply(F("AT+CIPRXGET=4,"), (int32_t)linkId, (uint16_t)500);
+  if (!parseReply(F("+CIPRXGET: 4,"), &avail, ',', 1)) return 0;
+  return avail;
+}
+
+uint16_t BuoyModem::tcpRead(uint8_t linkId, uint8_t *buff, uint16_t len) {
+  // CIPRXGET=2,<id>,<len> -> "+CIPRXGET: 2,<id>,<len>,<cnflen>" then raw data then OK.
+  uint16_t avail = 0;
+  getReply(F("AT+CIPRXGET=2,"), (int32_t)linkId, (int32_t)len, (uint16_t)1000);
+  if (!parseReply(F("+CIPRXGET: 2,"), &avail, ',', 1)) return 0;
+  if (avail > len) avail = len;
+
+  // Pull exactly `avail` payload bytes straight off the UART. This bypasses the
+  // 254-byte replybuffer cap in readRaw() AND the no-timeout readRaw() that can
+  // return short and let the tail bytes get eaten by the trailing "OK" read.
+  uint16_t got = 0;
+  uint32_t deadline = millis() + 1000;
+  while (got < avail && (int32_t)(deadline - millis()) > 0) {
+    if (mySerial->available()) {
+      buff[got++] = (uint8_t)mySerial->read();
+    }
+  }
+
+  readline(1000);  // eat trailing "OK"
+  return got;
+}
+
+// ============================================================
+// NTRIP chunked-stream buffer
+// Bytes are pulled from the modem in block tcpRead() calls so the per-byte AT
+// CIPRXGET cost is amortized ~256x; the chunked decoder consumes them one at a
+// time from the buffer with the same blocking-with-timeout semantics the WiFi
+// reference gets for free from WiFiClient.
+// ============================================================
+
+void ntripStreamReset() {
+  ntripStreamLen = 0;
+  ntripStreamPos = 0;
+}
+
+void ntripStreamSeed(const uint8_t *data, uint16_t len) {
+  ntripStreamLen = (len > (uint16_t)sizeof(ntripStreamBuf)) ? (uint16_t)sizeof(ntripStreamBuf) : len;
+  ntripStreamPos = 0;
+  if (ntripStreamLen > 0) {
+    memcpy(ntripStreamBuf, data, ntripStreamLen);
+  }
+}
+
+// Refill the buffer from the modem when it is fully drained. Returns the number
+// of bytes newly buffered (0 = nothing available right now).
+uint16_t ntripStreamRefill() {
+  if (ntripStreamPos < ntripStreamLen) {
+    return ntripStreamLen - ntripStreamPos;
+  }
+  ntripStreamLen = 0;
+  ntripStreamPos = 0;
+
+  uint16_t avail = modem.tcpAvailable(BuoyModem::LINK_NTRIP);
+  if (avail == 0) return 0;
+
+  uint16_t want = min(avail, (uint16_t)sizeof(ntripStreamBuf));
+  uint16_t got = modem.tcpRead(BuoyModem::LINK_NTRIP, ntripStreamBuf, want);
+  ntripStreamLen = got;
+  return got;
+}
+
+// Blocking single-byte read from the stream buffer. Returns -1 on timeout.
+// Keeps the chunked decoder in sync when a chunk-size line or payload straddles
+// a refill boundary, exactly like the WiFi reference's readByteBlocking().
+int ntripStreamReadByte(uint32_t timeoutMs) {
+  uint32_t start = millis();
+  while ((int32_t)(millis() - start) < (int32_t)timeoutMs) {
+    if (ntripStreamPos < ntripStreamLen) {
+      return ntripStreamBuf[ntripStreamPos++];
+    }
+    if (ntripStreamRefill() > 0) continue;
+    delay(1);
+  }
+  return -1;
+}
+
 bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
   buoyPrintln("[HOLO] CIPSTART cloudsocket.hologram.io:9999");
-  if (!tcpConnectPlain("cloudsocket.hologram.io", 9999)) {
+  if (!tcpConnectPlain(LINK_HOLOGRAM, "cloudsocket.hologram.io", 9999)) {
     buoyPrintln("[HOLO] CIPSTART FAILED");
     return false;
   }
   buoyPrintln("[HOLO] CIPSEND " + String(len) + " bytes");
-  if (!tcpSendPlain(msg, len)) {
+  if (!tcpSendPlain(LINK_HOLOGRAM, msg, len)) {
     buoyPrintln("[HOLO] CIPSEND FAILED");
-    sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+    tcpClosePlain(LINK_HOLOGRAM);
     return false;
   }
 
   // The CIP stack is in CIPRXGET=1 ("manual receive") mode globally so NTRIP
   // can pull RTCM bytes on demand. In that mode incoming TCP bytes are NOT
   // delivered as +IPD URCs — we see only a "+CIPRXGET: 1" hint, then have to
-  // pull the data ourselves. Botletics' TCPavailable()/TCPread() wrap the
-  // required AT+CIPRXGET=2,<n> sequence; reuse the same path RTCM uses.
+  // pull the data ourselves. tcpAvailable()/tcpRead() wrap the required
+  // AT+CIPRXGET=4,<id> / AT+CIPRXGET=2,<id>,<len> sequence for link 1.
   char respBuf[80];
   uint16_t respLen = 0;
   respBuf[0] = '\0';
   bool ok = false;
   const uint32_t deadline = millis() + 8000;
   while ((int32_t)(deadline - millis()) > 0) {
-    uint16_t avail = TCPavailable();
+    uint16_t avail = tcpAvailable(LINK_HOLOGRAM);
     if (avail > 0) {
       uint16_t room = (uint16_t)(sizeof(respBuf) - 1 - respLen);
       if (room == 0) break;
       uint16_t want = (avail < room) ? avail : room;
-      uint16_t got = TCPread((uint8_t *)(respBuf + respLen), want);
+      uint16_t got = tcpRead(LINK_HOLOGRAM, (uint8_t *)(respBuf + respLen), want);
       respLen += got;
       respBuf[respLen] = '\0';
       if (strstr(respBuf, "[0,0]")) { ok = true; break; }
@@ -402,7 +540,7 @@ bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
 
   buoyPrintln("[HOLO] response (" + String(respLen) + " bytes): '" + String(respBuf) + "'");
 
-  sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+  tcpClosePlain(LINK_HOLOGRAM);
   return ok;
 }
 
@@ -560,7 +698,7 @@ void invalidateDataPath(const __FlashStringHelper *reason) {
   buoyPrintln(reason);
 
   if (ntripConnected) {
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripConnected = false;
   }
   modem.invalidateCipStack();
@@ -933,21 +1071,8 @@ void postTelemetry() {
     return;
   }
 
-  // Match the local-portal branch's CIP cleanup: closing the NTRIP socket
-  // with just a 500 ms delay was not enough — the modem still treated the
-  // CIP stack as busy when sendHologramCloudMessage tried to CIPSTART again,
-  // producing intermittent [TELEM] Hologram failed even when the Hologram
-  // device key is valid.
-  if (ntripConnected) {
-    buoyPrintln("[TELEM] closing NTRIP for Hologram send...");
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
-    ntripConnected = false;
-    modem.invalidateCipStack();
-    delay(2000);
-    buoyPrintln("[TELEM] ensurePdpActive...");
-    modem.ensurePdpActive();
-  }
-
+  // CIPMUX=1 keeps the NTRIP socket (link 0) open while Hologram (link 1)
+  // sends telemetry. No more closing NTRIP / invalidating the CIP stack here.
   buoyPrintln("[TELEM] Hologram cloud...");
   bool ok = modem.sendHologramCloudMessage(msg, (uint16_t)n);
   buoyPrintln(ok ? "[TELEM] Hologram OK" : "[TELEM] Hologram failed");
@@ -1000,7 +1125,7 @@ void beginNTRIPClient() {
   buoyPrint("[NTRIP] connecting to "); buoyPrint(casterHost);
   buoyPrint(":"); buoyPrintln(casterPort);
 
-  if (!modem.tcpConnectPlain(casterHost, casterPort)) {
+  if (!modem.tcpConnectPlain(BuoyModem::LINK_NTRIP, casterHost, casterPort)) {
     buoyPrintln("[NTRIP] TCP connect failed");
     ntripAttemptFailed();
     return;
@@ -1029,7 +1154,7 @@ void beginNTRIPClient() {
   }
   strncat(serverRequest, "\r\n", SERVER_BUFFER_SIZE - strlen(serverRequest) - 1);
 
-  if (!modem.tcpSendPlain(serverRequest, strlen(serverRequest))) {
+  if (!modem.tcpSendPlain(BuoyModem::LINK_NTRIP, serverRequest, strlen(serverRequest))) {
     buoyPrintln("[NTRIP] send failed");
     ntripAttemptFailed();
     return;
@@ -1037,35 +1162,66 @@ void beginNTRIPClient() {
 
   delay(2000);  // give caster time to reply
 
-  uint16_t available = modem.TCPavailable();
+  uint16_t available = modem.tcpAvailable(BuoyModem::LINK_NTRIP);
   if (available == 0) {
     buoyPrintln("[NTRIP] no response from caster");
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripAttemptFailed();
     return;
   }
 
-  // Read first chunk to check status line
-  uint8_t responseBuffer[128];
-  uint16_t bytesToRead = min(available, (uint16_t)sizeof(responseBuffer));
-  uint16_t bytesRead = modem.TCPread(responseBuffer, bytesToRead);
-  if (bytesRead == 0) {
-    delay(1000);
-    bytesRead = modem.TCPread(responseBuffer, bytesToRead);
+  // Read response headers in fast block reads until \r\n\r\n
+  char responseBuffer[1024];
+  uint16_t responseLen = 0;
+  bool foundHeaderEnd = false;
+  uint32_t deadline = millis() + 10000; // 10s timeout
+  ntripStreamReset();
+
+  while (millis() < deadline && !foundHeaderEnd) {
+    uint16_t available = modem.tcpAvailable(BuoyModem::LINK_NTRIP);
+    if (available > 0) {
+      uint16_t toRead = min(available, (uint16_t)(sizeof(responseBuffer) - 1 - responseLen));
+      if (toRead > 0) {
+        uint16_t got = modem.tcpRead(BuoyModem::LINK_NTRIP, (uint8_t *)(responseBuffer + responseLen), toRead);
+        if (got > 0) {
+          responseLen += got;
+          responseBuffer[responseLen] = '\0';
+
+          // Check if we've received the full HTTP headers (\r\n\r\n)
+          const char *headerEnd = strstr(responseBuffer, "\r\n\r\n");
+          if (headerEnd != nullptr) {
+            foundHeaderEnd = true;
+            // Seed the chunked decoder with any body overflow that arrived in
+            // the same read as the headers — without this the first chunk
+            // header is lost and the decoder desyncs immediately.
+            const uint8_t *payloadStart = (const uint8_t *)(headerEnd + 4);
+            uint16_t overflow = responseLen - (payloadStart - (const uint8_t *)responseBuffer);
+            if (overflow > 0) {
+              ntripStreamSeed(payloadStart, overflow);
+              buoyPrintln("[NTRIP] Handoff: " + String(overflow) + " bytes preloaded");
+            }
+            break;
+          }
+        }
+      }
+    } else {
+      delay(5);
+    }
   }
-  if (bytesRead == 0) {
-    buoyPrintln("[NTRIP] empty read");
+
+  if (!foundHeaderEnd) {
+    buoyPrintln("[NTRIP] Failed to read full HTTP headers / timeout");
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripAttemptFailed();
     return;
   }
 
-  // Null-terminate for substring search
-  responseBuffer[(bytesRead < sizeof(responseBuffer)) ? bytesRead : sizeof(responseBuffer) - 1] = '\0';
-  const char *rb = (const char *)responseBuffer;
+  bool ok = strstr(responseBuffer, "ICY 200") != nullptr || 
+            strstr(responseBuffer, "HTTP/1.0 200") != nullptr || 
+            strstr(responseBuffer, "HTTP/1.1 200") != nullptr;
 
-  bool ok = strstr(rb, "ICY 200") || strstr(rb, "HTTP/1.0 200") || strstr(rb, "HTTP/1.1 200");
-  bool unauth = strstr(rb, " 401") != nullptr;
-  bool notfound = strstr(rb, " 404") != nullptr;
+  bool unauth = strstr(responseBuffer, " 401") != nullptr;
+  bool notfound = strstr(responseBuffer, " 404") != nullptr;
 
   if (ok) {
     buoyPrintln("[NTRIP] connected");
@@ -1075,76 +1231,153 @@ void beginNTRIPClient() {
     noteCellularActivity();
 
     String gga = modem.buildGGA();
-    modem.tcpSendPlain(gga.c_str(), gga.length());
+    modem.tcpSendPlain(BuoyModem::LINK_NTRIP, gga.c_str(), gga.length());
     lastGgaSentMs = millis();
     buoyPrintln("[NTRIP] GGA Sent");
   } else if (unauth) {
     buoyPrintln("[NTRIP] 401 unauthorized");
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripAttemptFailed();
   } else if (notfound) {
     buoyPrintln("[NTRIP] 404 mount not found");
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripAttemptFailed();
   } else {
     buoyPrintln("[NTRIP] unrecognized response");
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 10000);
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripAttemptFailed();
   }
 }
 
-
-
 void handleNTRIPData() {
-  uint16_t available = modem.TCPavailable();
-
-  if (available == 0) {
-    if (millis() - lastReceivedRtcmMs > maxTimeBeforeHangupMs) {
-      buoyPrintln("[NTRIP] RTCM timeout, disconnecting");
-      modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
-      ntripConnected = false;
-      ntripAttemptFailed();
+  // If not connected, or if no data is expected, just send GGA and return.
+  if (!ntripConnected) {
+    if (millis() - lastGgaSentMs > ggaIntervalMs) {
+      String gga = modem.buildGGA();
+      modem.tcpSendPlain(BuoyModem::LINK_NTRIP, gga.c_str(), gga.length());
+      lastGgaSentMs = millis();
+      buoyPrintln("[NTRIP] GGA Sent (idle)");
     }
     return;
   }
 
-  uint8_t rtcmBuffer[256];
-  uint32_t totalSent = 0;
-  int readCount = 0;
+  // Handle NTRIP data (receives RTCM and sends to GPS via UART).
+  // Bytes come from ntripStreamBuf, refilled with block tcpRead() calls so the
+  // AT CIPRXGET cost is amortized instead of one round-trip per byte.
+  // Process as many chunks as possible within a reasonable timeframe (e.g., 200ms).
+  uint32_t startTime = millis();
+  uint16_t forwarded = 0;
 
-  while (modem.TCPavailable() > 0 && readCount < 40) {
-    uint16_t bytesRead = modem.TCPread(rtcmBuffer, 250);
-    if (bytesRead > 0 && gpsUARTOnline) {
-      gpsSerial.write(rtcmBuffer, bytesRead);
-      totalSent += bytesRead;
-      readCount++;
-    } else {
-      break;
+  while ((int32_t)(millis() - startTime) < 200) {
+
+    // Check for GGA interval
+    if (millis() - lastGgaSentMs > ggaIntervalMs) {
+      String gga = modem.buildGGA();
+      modem.tcpSendPlain(BuoyModem::LINK_NTRIP, gga.c_str(), gga.length());
+      lastGgaSentMs = millis();
+      buoyPrintln("[NTRIP] GGA Sent");
+    }
+
+    // No data buffered locally and nothing waiting in the modem socket.
+    if (ntripStreamPos >= ntripStreamLen &&
+        modem.tcpAvailable(BuoyModem::LINK_NTRIP) == 0) {
+      // If no data, check for timeout
+      if (millis() - lastReceivedRtcmMs > maxTimeBeforeHangupMs) {
+        buoyPrintln("[NTRIP] RTCM timeout, disconnecting");
+        modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+        ntripConnected = false;
+        ntripAttemptFailed();
+        return;
+      }
+      break; // No more data to read for now
+    }
+
+    // --- Chunked Stream Decoder ---
+    // Read hex chunk-size line, terminated by CRLF.
+    // Polaris paces corrections in ~1Hz bursts; the 5s blocking timeout matches
+    // the proven WiFi reference so a normal inter-chunk gap doesn't drop us.
+    char chunkSizeBuf[12];
+    int idx = 0;
+    bool sizeReadOk = true;
+    while (idx < (int)sizeof(chunkSizeBuf) - 1) {
+      int b = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+      if (b < 0) { sizeReadOk = false; break; }
+      if (b == '\n') break;
+      if (b != '\r') chunkSizeBuf[idx++] = (char)b;
+    }
+    chunkSizeBuf[idx] = '\0';
+
+    if (!sizeReadOk) {
+      buoyPrintln("[NTRIP] timeout reading chunk size — dropping socket");
+      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+      ntripConnected = false;
+      return;
+    }
+
+    long chunkSize = strtol(chunkSizeBuf, NULL, 16);
+
+    if (chunkSize == 0) {
+      buoyPrintln("[NTRIP] Chunked stream ended (0-size)");
+      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+      ntripConnected = false;
+      return;
+    }
+
+    if (chunkSize < 0 || chunkSize > 4096) {
+      buoyPrintln("[NTRIP] Oversized chunk, likely desync (chunkSize=" + String(chunkSize) + ")");
+      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+      ntripConnected = false;
+      return;
+    }
+
+    // Consume exactly chunkSize bytes
+    long remaining = chunkSize;
+    uint8_t buffer[128];
+    while (remaining > 0) {
+      int want = (remaining > (long)sizeof(buffer)) ? (int)sizeof(buffer) : (int)remaining;
+      int got = 0;
+      while (got < want) {
+        int b = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+        if (b < 0) {
+          buoyPrintln("[NTRIP] Payload read failed");
+          modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+          ntripConnected = false;
+          return;
+        }
+        buffer[got++] = (uint8_t)b;
+      }
+
+      if (gpsUARTOnline) gpsSerial.write(buffer, got);
+      forwarded += got;
+      remaining -= got;
+      lastReceivedRtcmMs = millis();
+      noteCellularActivity();
+    }
+
+    // Consume trailing CRLF
+    int b1 = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+    int b2 = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+    if (b1 != '\r' || b2 != '\n') {
+      buoyPrintln("[NTRIP] Trailing CRLF mismatch");
+      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+      ntripConnected = false;
+      return;
     }
   }
 
-  if (totalSent > 0) {
-    lastReceivedRtcmMs = millis();
-    noteCellularActivity();
-  }
-
-  // Periodic throughput line so we know RTCM is flowing without spamming every loop.
+  // Throughput + backlog telemetry so a healthy stream is distinguishable from
+  // a desync from a dead socket without guessing.
   static unsigned long lastRtcmReport = 0;
   static uint32_t bytesSinceReport = 0;
-  bytesSinceReport += totalSent;
+  bytesSinceReport += forwarded;
   if (millis() - lastRtcmReport > 10000) {
     lastRtcmReport = millis();
     buoyPrint("[RTCM] "); buoyPrint(bytesSinceReport);
-    buoyPrint(" B/10s backlog="); buoyPrintln(modem.TCPavailable());
+    buoyPrint(" B/10s backlog="); buoyPrintln(modem.tcpAvailable(BuoyModem::LINK_NTRIP));
     bytesSinceReport = 0;
   }
-
-  if (millis() - lastGgaSentMs > ggaIntervalMs)
-  {
-    String gga = modem.buildGGA();
-    modem.tcpSendPlain(gga.c_str(), gga.length());
-    lastGgaSentMs = millis();
-    buoyPrintln("[NTRIP] GGA Sent");
+  if (forwarded > 0) {
+    buoyPrint("[RTCM] to ZED: "); buoyPrintln(forwarded);
   }
 }
 
@@ -1260,7 +1493,7 @@ void gracefulShutdown() {
   // Close NTRIP/TCP connection
   if (ntripConnected) {
     buoyPrintln("Closing NTRIP connection...");
-    modem.sendCheckReply(F("AT+CIPCLOSE"), F("CLOSE OK"), 5000);
+    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
     ntripConnected = false;
     delay(1000);
   }

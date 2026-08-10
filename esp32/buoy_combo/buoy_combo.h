@@ -136,11 +136,19 @@ extern bool bleConnected;
 // BOTLETICS_SSL is 1 in the installed library, which fails on plain NTRIP port 2101.
 class BuoyModem : public Botletics_modem_LTE {
 public:
+  // Multiplexed CIP connections: 0 = NTRIP RTCM, 1 = Hologram telemetry.
+  // SIM7000 supports up to 8 simultaneous sockets with AT+CIPMUX=1.
+  static constexpr uint8_t LINK_NTRIP = 0;
+  static constexpr uint8_t LINK_HOLOGRAM = 1;
+
   bool ensurePdpActive();
   bool bringUpCipStack();
-  bool tcpConnectPlain(const char *server, uint16_t port);
-  bool tcpConnectedPlain();
-  bool tcpSendPlain(const char *packet, uint16_t len);
+  bool tcpConnectPlain(uint8_t linkId, const char *server, uint16_t port);
+  bool tcpConnectedPlain(uint8_t linkId);
+  bool tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len);
+  bool tcpClosePlain(uint8_t linkId);
+  uint16_t tcpAvailable(uint8_t linkId);
+  uint16_t tcpRead(uint8_t linkId, uint8_t *buff, uint16_t len);
   bool sendHologramCloudMessage(const char *msg, uint16_t len);
   void printDiagnostics();
   bool waitModemAtReady(uint32_t timeoutMs = MODEM_AT_READY_TIMEOUT_MS);
@@ -152,7 +160,7 @@ public:
   String buildGGA();
 
 private:
-  bool mCipStackUp = false;
+  bool m_CipStackUp = false;
 };
 
 extern bool networkConnected;
