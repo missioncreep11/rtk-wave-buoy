@@ -144,7 +144,6 @@ public:
   bool ensurePdpActive();
   bool bringUpCipStack();
   bool tcpConnectPlain(uint8_t linkId, const char *server, uint16_t port);
-  bool tcpConnectedPlain(uint8_t linkId);
   bool tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len);
   bool tcpClosePlain(uint8_t linkId);
   uint16_t tcpAvailable(uint8_t linkId);
@@ -199,7 +198,6 @@ bool modemPowerCycleRecover(const __FlashStringHelper *reason,
                              bool bypassCooldown = false);
 void modemRecoverEscalated(const __FlashStringHelper *reason);
 void postTelemetry();
-void printDebugStatus();
 void updateStatusLED();
 void shutdownISR();
 

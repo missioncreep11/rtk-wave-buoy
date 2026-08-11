@@ -14,14 +14,11 @@
 #include "esp_mac.h"
 
 #define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define BLE_CHAR_RX_UUID  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // phone -> buoy
 #define BLE_CHAR_TX_UUID  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // buoy -> phone
 
 BLEServer* pServer = NULL;
 BLECharacteristic* pTxChar = NULL;
 bool bleConnected = false;
-char bleRxBuf[256] = {0};
-volatile bool bleDataReady = false;
 
 #include "secrets.h"
 #include "buoy_combo.h"
@@ -349,14 +346,6 @@ bool BuoyModem::tcpConnectPlain(uint8_t linkId, const char *server, uint16_t por
     }
   }
   return false;
-}
-
-bool BuoyModem::tcpConnectedPlain(uint8_t linkId) {
-  char cmd[24];
-  snprintf(cmd, sizeof(cmd), "AT+CIPSTATUS=%u", linkId);
-  getReply(cmd, (uint16_t)200);
-  // Per-link status: +CIPSTATUS: <id>,<status>,"TCP","host","port","CONNECTED"
-  return (strstr(replybuffer, "CONNECTED") != nullptr);
 }
 
 bool BuoyModem::tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len) {
@@ -743,17 +732,6 @@ void modemUartFlush() {
 }
 
 // Match setup(): UART re-probe + boot-style network config (not CFUN=0 recover path).
-bool modemColdBootSequence() {
-  modem.invalidateCipStack();
-  modemUartFlush();
-  if (!modemLinkBegin()) {
-    buoyPrintln("[MODEM] UART/begin failed");
-    return false;
-  }
-  modem.configureNetwork(false);
-  return true;
-}
-
 void modemPwrkeyPowerOff() {
   pinMode(BOTLETICS_PWRKEY, OUTPUT);
   digitalWrite(BOTLETICS_PWRKEY, HIGH);
@@ -838,8 +816,6 @@ bool modemPowerCycleRecover(const __FlashStringHelper *reason,
   return false;
 }
 
-static bool s_modemRecoverNextPowerCycle = false;
-
 void modemRecoverEscalated(const __FlashStringHelper *reason) {
   if (modemPowerCycleRecover(reason, false)) {
     return;
@@ -848,27 +824,7 @@ void modemRecoverEscalated(const __FlashStringHelper *reason) {
   modemHardRecover(reason);
 }
 
-void modemRecoverEscalationReset() {
-  s_modemRecoverNextPowerCycle = false;
-}
-
 bool cgregRegistered(uint8_t n) { return n == 1 || n == 5; }
-
-void modemRecoverEscalationMaybeReset(uint8_t cgregStat) {
-  static unsigned long registeredSinceMs = 0;
-
-  if (!cgregRegistered(cgregStat)) {
-    registeredSinceMs = 0;
-    return;
-  }
-  if (registeredSinceMs == 0) {
-    registeredSinceMs = millis();
-    return;
-  }
-  if (millis() - registeredSinceMs >= REGISTERED_STABLE_MS) {
-    modemRecoverEscalationReset();
-  }
-}
 
 bool cellularLinkAlive() {
   return (ntripConnected &&
@@ -925,7 +881,6 @@ void networkStatusCheck() {
   }
 
   if (n == 1 || n == 5) {
-    modemRecoverEscalationMaybeReset(n);
     if (!networkConnected) {
       networkConnected = true;
       buoyPrintln("[NET] connected");
@@ -1445,26 +1400,6 @@ void monitorConnectionHealth() {
   }
 }
 
-// DEBUG help
-void printDebugStatus() {
-  buoyPrintln("=== DEBUG STATUS ===");
-  buoyPrint("networkConnected = ");
-  buoyPrintln(networkConnected ? "true" : "false");
-  buoyPrint("gprsEnabled = ");
-  buoyPrintln(gprsEnabled ? "true" : "false");
-  buoyPrint("gpsUARTOnline = ");
-  buoyPrintln(gpsUARTOnline ? "true" : "false");
-  buoyPrint("ntripConnected = ");
-  buoyPrintln(ntripConnected ? "true" : "false");
-  buoyPrint("lastNtripAttempt = ");
-  buoyPrintln(lastNtripAttempt);
-  buoyPrint("millis() = ");
-  buoyPrintln(millis());
-  buoyPrint("Time since last attempt = ");
-  buoyPrintln(millis() - lastNtripAttempt);
-  buoyPrintln("=== END DEBUG STATUS ===");
-}
-
 void updateStatusLED() {
 
   if (ntripConnected) {
@@ -1539,7 +1474,7 @@ void gracefulShutdown() {
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     bleConnected = true;
-    buoyPrintln("BLE connected. Commands: STATUS GPS RESET SLEEP");
+    buoyPrintln("BLE connected.");
   }
   void onDisconnect(BLEServer* pServer) {
     bleConnected = false;
@@ -1547,61 +1482,6 @@ class ServerCallbacks : public BLEServerCallbacks {
     pServer->startAdvertising();
   }
 };
-
-class RxCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pChar) {
-    strncpy(bleRxBuf, pChar->getValue().c_str(), sizeof(bleRxBuf) - 1);
-    bleRxBuf[sizeof(bleRxBuf) - 1] = '\0';
-    bleDataReady = true;
-  }
-};
-
-// ============================================================
-// BLE command handler (buoy_combo variant — no WiFi, no GET/SET)
-// ============================================================
-void handleBLECommand(String cmd) {
-  cmd.trim();
-  if (cmd.length() == 0) return;
-
-  String cmdUpper = cmd;
-  cmdUpper.toUpperCase();
-
-  // --- STATUS ---
-  if (cmdUpper == "STATUS") {
-    buoyPrintln("=== STATUS ===");
-    buoyPrintln("Network: " + String(networkConnected ? "connected" : "disconnected"));
-    buoyPrintln("GPRS: "    + String(gprsEnabled    ? "enabled"  : "disabled"));
-    buoyPrintln("NTRIP: "   + String(ntripConnected ? "connected" : "disconnected"));
-    buoyPrintln("GPS: "     + String(gpsUARTOnline  ? "online"   : "offline"));
-    buoyPrintln("INA228: "  + String(ina228Online   ? "online"   : "offline"));
-    buoyPrintln("==============");
-
-  // --- GPS ---
-  } else if (cmdUpper == "GPS") {
-    buoyPrintln("=== GPS ===");
-    broadcastGPS();
-
-  // --- RESET ---
-  } else if (cmdUpper == "RESET") {
-    buoyPrintln("Resetting NTRIP connection...");
-    ntripConnected = false;
-    lastNtripAttempt = 0;
-
-  // --- SLEEP ---
-  } else if (cmdUpper == "SLEEP") {
-    buoyPrintln("Entering light sleep. Press button to wake.");
-    ntripConnected = false;
-    digitalWrite(STATUS_LED, LOW);
-    delay(500);
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
-    esp_light_sleep_start();
-    buoyPrintln("Woke from sleep.");
-
-  } else {
-    buoyPrintln("Unknown command: " + cmd);
-    buoyPrintln("Commands: STATUS GPS RESET SLEEP");
-  }
-}
 
 // ============================================================
 // Print GPS status over BLE
@@ -1647,10 +1527,6 @@ void setup() {
               BLECharacteristic::PROPERTY_NOTIFY);
   pTxChar->addDescriptor(new BLE2902());
 
-  BLECharacteristic* pRxChar = pService->createCharacteristic(BLE_CHAR_RX_UUID,
-    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-  pRxChar->setCallbacks(new RxCallbacks());
-
   pService->start();
   pServer->getAdvertising()->start();
   buoyPrintln("BLE advertising as: " + String(bleName));
@@ -1694,12 +1570,6 @@ void setup() {
 }
 
 void loop() {
-  // Dispatch BLE commands
-  if (bleDataReady) {
-    bleDataReady = false;
-    handleBLECommand(String(bleRxBuf));
-  }
-
   // Handle user AT commands
   if (Serial.available()) {
     buoyPrint("modem> ");
