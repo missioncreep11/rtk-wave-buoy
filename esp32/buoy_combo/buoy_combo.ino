@@ -14,11 +14,14 @@
 #include "esp_mac.h"
 
 #define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_CHAR_RX_UUID  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // phone -> buoy
 #define BLE_CHAR_TX_UUID  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // buoy -> phone
 
 BLEServer* pServer = NULL;
 BLECharacteristic* pTxChar = NULL;
 bool bleConnected = false;
+char bleRxBuf[256] = {0};
+volatile bool bleDataReady = false;
 
 #include "secrets.h"
 #include "buoy_combo.h"
@@ -1056,7 +1059,7 @@ void enableGprs() {
   }
 
   modem.enableGPRS(false);
-  delay(2000);
+  delay(5000);
 
   for (int attempt = 1; attempt <= 3; attempt++) {
     if (modem.enableGPRS(true)) {
@@ -1483,6 +1486,14 @@ class ServerCallbacks : public BLEServerCallbacks {
   }
 };
 
+class RxCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pChar) {
+    strncpy(bleRxBuf, pChar->getValue().c_str(), sizeof(bleRxBuf) - 1);
+    bleRxBuf[sizeof(bleRxBuf) - 1] = '\0';
+    bleDataReady = true;
+  }
+};
+
 // ============================================================
 // Print GPS status over BLE
 // ============================================================
@@ -1526,6 +1537,10 @@ void setup() {
   pTxChar = pService->createCharacteristic(BLE_CHAR_TX_UUID,
               BLECharacteristic::PROPERTY_NOTIFY);
   pTxChar->addDescriptor(new BLE2902());
+
+  BLECharacteristic* pRxChar = pService->createCharacteristic(BLE_CHAR_RX_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  pRxChar->setCallbacks(new RxCallbacks());
 
   pService->start();
   pServer->getAdvertising()->start();
