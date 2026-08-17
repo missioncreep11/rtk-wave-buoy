@@ -716,12 +716,56 @@ void refreshGprs(const __FlashStringHelper *reason) {
   invalidateDataPath(reason);
 }
 
+// Sends "AT" at the current modemSS baud and returns true if the modem answers
+// (OK with echo off, or the echoed command with echo on).
+bool modemRespondsAt(uint16_t timeoutMs) {
+  while (modemSS.available()) modemSS.read();
+  const uint32_t deadline = millis() + timeoutMs;
+  while ((int32_t)(deadline - millis()) > 0) {
+    modemSS.println(F("AT"));
+    char line[32];
+    uint8_t idx = 0;
+    line[0] = '\0';
+    const uint32_t lineDeadline = millis() + 500;
+    while ((int32_t)(lineDeadline - millis()) > 0) {
+      if (modemSS.available()) {
+        char c = (char)modemSS.read();
+        if (c == '\n') break;
+        if (c != '\r' && idx < sizeof(line) - 1) line[idx++] = c;
+      }
+    }
+    line[idx] = '\0';
+    if (idx > 0 && (strstr(line, "OK") != nullptr || strstr(line, "AT") != nullptr)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool modemLinkBegin() {
-  modemSS.begin(115200, SERIAL_8N1, TX_MODEM, RX_MODEM);
-  modemSS.println(F("AT+IPR=9600"));
-  delay(1000);
-  modemSS.begin(9600, SERIAL_8N1, TX_MODEM, RX_MODEM);
-  return modem.begin(modemSS);
+  // SIM7000 persists AT+IPR in NVRAM; after a session at 9600 it can cold-boot
+  // at 9600 even though the factory default is 115200. Probe AT at 115200 first,
+  // then fall back to 9600 and re-lock the modem to 115200 for this session.
+  const unsigned long candidateRates[] = {115200UL, 9600UL};
+  for (uint8_t i = 0; i < 2; i++) {
+    const unsigned long rate = candidateRates[i];
+    modemSS.begin(rate, SERIAL_8N1, TX_MODEM, RX_MODEM);
+    delay(200);
+    if (modemRespondsAt(2000)) {
+      if (rate != 115200UL) {
+        // Modem was at 9600 — switch it to 115200 for this session.
+        modemSS.println(F("AT+IPR=115200"));
+        delay(1000);
+        modemSS.begin(115200UL, SERIAL_8N1, TX_MODEM, RX_MODEM);
+        delay(100);
+        if (!modemRespondsAt(2000)) {
+          return false;
+        }
+      }
+      return modem.begin(modemSS);
+    }
+  }
+  return false;
 }
 
 void modemUartFlush() {
@@ -1042,7 +1086,7 @@ void postTelemetry() {
   }
 }
 
-void enableGprs() {
+void setupGprs() {
   if (!networkConnected || gprsEnabled) return;
 
   // Poor signal: try again next loop
@@ -1565,7 +1609,7 @@ void setup() {
   modem.powerOn(BOTLETICS_PWRKEY);
   delay(5000);
 
-  buoyPrintln("Configuring modem to 9600 baud");
+  buoyPrintln("Configuring modem to 115200 baud");
   if (!modemLinkBegin()) {
     buoyPrintln("Couldn't find modem");
     while (1);
@@ -1600,7 +1644,7 @@ void loop() {
   
   // Network management
   networkStatusCheck();
-  enableGprs();
+  setupGprs();
   
   // NTRIP connection management
   if (gprsEnabled && !ntripConnected && 

@@ -183,7 +183,7 @@ extern bool ina228Online;
 
 // Function declarations
 void networkStatusCheck();
-void enableGprs();
+void setupGprs();
 void initializeGnssUart();
 void initializeIna228();
 void printPowerStatus();
