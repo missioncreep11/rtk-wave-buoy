@@ -17,8 +17,8 @@ inline void buoyPrint(int v)                  { buoyPrint(String(v)); }
 inline void buoyPrint(unsigned int v)         { buoyPrint(String(v)); }
 inline void buoyPrint(long v)                 { buoyPrint(String(v)); }
 inline void buoyPrint(unsigned long v)        { buoyPrint(String(v)); }
-inline void buoyPrint(uint8_t v)              { buoyPrint(String((unsigned int)v)); }
-inline void buoyPrint(uint16_t v)             { buoyPrint(String((unsigned int)v)); }
+inline void buoyPrint(uint8_t v)              { buoyPrint(String(v)); }
+inline void buoyPrint(uint16_t v)             { buoyPrint(String(v)); }
 inline void buoyPrint(float v, int p = 2)     { buoyPrint(String(v, p)); }
 inline void buoyPrint(double v, int p = 2)    { buoyPrint(String(v, p)); }
 
@@ -26,8 +26,8 @@ inline void buoyPrintln(int v)                { buoyPrintln(String(v)); }
 inline void buoyPrintln(unsigned int v)       { buoyPrintln(String(v)); }
 inline void buoyPrintln(long v)               { buoyPrintln(String(v)); }
 inline void buoyPrintln(unsigned long v)      { buoyPrintln(String(v)); }
-inline void buoyPrintln(uint8_t v)            { buoyPrintln(String((unsigned int)v)); }
-inline void buoyPrintln(uint16_t v)           { buoyPrintln(String((unsigned int)v)); }
+inline void buoyPrintln(uint8_t v)            { buoyPrintln(String(v)); }
+inline void buoyPrintln(uint16_t v)           { buoyPrintln(String(v)); }
 inline void buoyPrintln(float v, int p = 2)   { buoyPrintln(String(v, p)); }
 inline void buoyPrintln(double v, int p = 2)  { buoyPrintln(String(v, p)); }
 
@@ -170,7 +170,7 @@ extern unsigned long lastNtripAttempt;
 extern unsigned long lastCellularActivityMs;
 extern unsigned long lastGprsEnabledMs;
 extern uint8_t consecutiveNtripFailures;
-extern long lastReceivedRtcmMs;
+extern unsigned long lastReceivedRtcmMs;
 extern int maxTimeBeforeHangupMs;
 extern const unsigned long ntripRetryInterval;
 extern BuoyModem modem;

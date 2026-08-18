@@ -79,7 +79,7 @@ bool ina228Online = false;
 volatile bool shutdownRequested = false;
 
 // Timing
-long lastReceivedRtcmMs = 0;
+unsigned long lastReceivedRtcmMs = 0;
 int maxTimeBeforeHangupMs = 100000;
 const unsigned long ntripRetryInterval = 30000;
 unsigned long lastNtripAttempt = 0;
@@ -314,7 +314,7 @@ bool BuoyModem::bringUpCipStack() {
   // CSTT may already be set from a prior bring-up; tolerate ERROR.
   sendCheckReply(F("AT+CSTT=\"hologram\""), ok_reply, 10000);
 
-  if (!sendCheckReply(F("AT+CIICR"), ok_reply, 85000)) return false;
+  if (!sendCheckReply(F("AT+CIICR"), ok_reply, 60000)) return false;
 
   // CIFSR returns just the IP literal on success (no OK), or ERROR.
   getReply(F("AT+CIFSR"), (uint16_t)5000);
@@ -326,7 +326,7 @@ bool BuoyModem::bringUpCipStack() {
 
 bool BuoyModem::tcpConnectPlain(uint8_t linkId, const char *server, uint16_t port) {
   // Best-effort socket cleanup; ignore errors when no socket is open.
-  getReply(F("AT+CIPCLOSE="), (int32_t)linkId, (uint16_t)2000);
+  getReply(F("AT+CIPCLOSE="), linkId, 2000);
 
   // Bring up the legacy CIPSTART stack. CIPSHUT inside may kill CNACT, restored below.
   if (!bringUpCipStack()) return false;
@@ -370,7 +370,7 @@ bool BuoyModem::tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len) {
   }
   if (!gotPrompt) {
     // ESC (0x1B) aborts the pending CIPSEND so the modem returns to AT mode.
-    mySerial->write((uint8_t)0x1B);
+    mySerial->write(0x1B);
     delay(200);
     flushInput();
     return false;
@@ -411,7 +411,7 @@ bool BuoyModem::tcpClosePlain(uint8_t linkId) {
 uint16_t BuoyModem::tcpAvailable(uint8_t linkId) {
   // CIPRXGET=4,<id> -> "+CIPRXGET: 4,<id>,<len>" then OK.
   uint16_t avail = 0;
-  getReply(F("AT+CIPRXGET=4,"), (int32_t)linkId, (uint16_t)500);
+  getReply(F("AT+CIPRXGET=4,"), linkId, 500);
   if (!parseReply(F("+CIPRXGET: 4,"), &avail, ',', 1)) return 0;
   return avail;
 }
@@ -419,7 +419,7 @@ uint16_t BuoyModem::tcpAvailable(uint8_t linkId) {
 uint16_t BuoyModem::tcpRead(uint8_t linkId, uint8_t *buff, uint16_t len) {
   // CIPRXGET=2,<id>,<len> -> "+CIPRXGET: 2,<id>,<len>,<cnflen>" then raw data then OK.
   uint16_t avail = 0;
-  getReply(F("AT+CIPRXGET=2,"), (int32_t)linkId, (int32_t)len, (uint16_t)1000);
+  getReply(F("AT+CIPRXGET=2,"), linkId, len, 1000);
   if (!parseReply(F("+CIPRXGET: 2,"), &avail, ',', 1)) return 0;
   if (avail > len) avail = len;
 
@@ -1103,20 +1103,32 @@ void setupGprs() {
   }
 
   modem.enableGPRS(false);
-  delay(5000);
+  for (int i = 0; i < 5; i++)
+  {
+    delay(1000);
+    if (modem.sendCheckReply(F("AT+CGATT?"), F("+CGATT: 0"), 5000))
+    {
+      buoyPrint("[GPRS] detached on try ");
+      buoyPrintln(i + 1);
+      break;
+    }
+  }
 
-  for (int attempt = 1; attempt <= 3; attempt++) {
-    if (modem.enableGPRS(true)) {
+  modem.enableGPRS(true);
+  for (int attempt = 0; attempt < 5; attempt++) 
+  {
+    if (modem.sendCheckReply(F("AT+CGATT?"), F("+CGATT: 1"), 5000)) 
+    {
       gprsEnabled = true;
       lastGprsEnabledMs = millis();
       noteCellularActivity();
       consecutiveNtripFailures = 0;
       buoyPrintln("[GPRS] enabled");
-      delay(2000);
+      delay(1000);
       return;
     }
-    buoyPrint("[GPRS] attempt "); buoyPrint(attempt); buoyPrintln("/3 failed");
-    if (attempt < 3) delay(attempt * 5000);  // 5s, 10s
+    buoyPrint("[GPRS] attempt "); buoyPrint(attempt + 1); buoyPrintln("/5 failed");
+    if ((attempt + 1) < 5) delay(1000);  // 1s between polls
   }
 
   buoyPrintln("[GPRS] all attempts failed");
@@ -1463,6 +1475,9 @@ void IRAM_ATTR shutdownISR() {
 
 void gracefulShutdown() {
   buoyPrintln("\n=== SHUTDOWN REQUESTED ===");
+
+  // reset shutdown flag
+  shutdownRequested = false;
   
   // Blink LED 3 times to confirm shutdown
   for (int i = 0; i < 3; i++) {
@@ -1497,7 +1512,7 @@ void gracefulShutdown() {
   digitalWrite(STATUS_LED, LOW);
   
   // Configure wake-up source
-  buoyPrintln("Entering deep sleep...");
+  buoyPrintln("Entering sleep...");
   buoyPrintln("Press button again to wake up.");
   Serial.flush();  // Make sure message prints before sleep
   
@@ -1654,15 +1669,14 @@ void loop() {
   }
 
   // Handle NTRIP data (receives RTCM and sends to GPS via UART)
-  if (ntripConnected) {
-    handleNTRIPData();
-  }
+  // check for ntrip connection performed in-function
+  handleNTRIPData();
   
   monitorConnectionHealth();
 
-  if (gprsEnabled) {
-    postTelemetry();
-  }
+  // telemetry sent every 60s
+  // check for gprs conn performed in-function
+  postTelemetry();
 
   // Power + GPS status every 5 seconds
   if (millis() - lastFixStatusPrint > 5000) {
