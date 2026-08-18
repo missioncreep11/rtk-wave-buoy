@@ -33,7 +33,8 @@ volatile bool bleDataReady = false;
 // ========================================================
 
 // BLE output helpers — echo to Serial and BLE simultaneously
-void buoyPrint(const String& msg) {
+void buoyPrint(const String& msg)
+{
   Serial.print(msg);
   if (bleConnected && pTxChar != NULL) {
     int len = msg.length();
@@ -48,7 +49,10 @@ void buoyPrint(const String& msg) {
     }
   }
 }
-void buoyPrintln(const String& msg) { buoyPrint(msg + "\n"); }
+void buoyPrintln(const String& msg)
+{
+  buoyPrint(msg + "\n");
+}
 
 #if !defined(HAS_HOLOGRAM_DEVICE_KEY)
 const char hologramDeviceKey[] = "";
@@ -60,8 +64,6 @@ const char hologramDeviceKey[] = "";
 #define RST 5
 #define TX_MODEM 17  // ESP32 TX1 to Modem RX
 #define RX_MODEM 16  // ESP32 RX1 to Modem TX
-// #define TX_GPS 12    // ESP32 TX2 to GPS RX
-// #define RX_GPS 27    // ESP32 RX2 to GPS TX
 
 // Global Objects
 HardwareSerial modemSS(1);     // UART1 to modem
@@ -79,16 +81,17 @@ bool ina228Online = false;
 volatile bool shutdownRequested = false;
 
 // Timing
-unsigned long lastReceivedRtcmMs = 0;
-int maxTimeBeforeHangupMs = 100000;
 const unsigned long ntripRetryInterval = 30000;
+const unsigned long ggaIntervalMs = 10000;
+unsigned long lastReceivedRtcmMs = 0;
+unsigned long maxTimeBeforeHangupMs = 100000;
 unsigned long lastNtripAttempt = 0;
 unsigned long lastCellularActivityMs = 0;
 unsigned long lastGprsEnabledMs = 0;
-uint8_t consecutiveNtripFailures = 0;
 unsigned long lastFixStatusPrint = 0;
-const unsigned long ggaIntervalMs = 10000;
 unsigned long lastGgaSentMs = 0;
+const uint32_t ntripReadTimeoutMs = 5000;
+uint8_t consecutiveNtripFailures = 0;
 
 // NTRIP chunked stream buffer. Bytes pulled from the modem with block
 // tcpRead() calls land here; the chunked decoder peels one byte at a time off
@@ -105,46 +108,34 @@ char imei[16] = {0};
 // BuoyModem method implementations
 // ============================================================
 
-// TODO: Make actual print msgs and replies more readable
-void BuoyModem::printDiagnostics() {
+void BuoyModem::printDiagnostics()
+{
   const uint16_t t = 3000;
-  // KH -- SIM PIN status: READY if no password needed, SIM PIN if awaiting password
-  getReply(F("AT+CPIN?"), t);
-  buoyPrint(F("[DIAG] CPIN: "));
-  buoyPrintln(replybuffer);
-  // KH -- Modem Functionality Level: 0 if minimal, 1 if full (this is what you want)
-  getReply(F("AT+CFUN?"), t);
-  buoyPrint(F("[DIAG] CFUN: "));
-  buoyPrintln(replybuffer);
-  // KH -- network registration: 0 if not registered, 1 if registered at home, 5 if roaming
-  getReply(F("AT+CREG?"), t);
-  buoyPrint(F("[DIAG] CREG (circuit): "));
-  buoyPrintln(replybuffer);
-  // KH -- GPRS network registration: 0 if not registered, 1 if registered at home, 5 if roaming (typical)
-  getReply(F("AT+CGREG?"), t);
-  buoyPrint(F("[DIAG] CGREG (LTE data — used by [NET]): "));
-  buoyPrintln(replybuffer);
-  // KH -- Signal quality: 2-31 is proper
-  getReply(F("AT+CSQ"), t);
-  buoyPrint(F("[DIAG] CSQ: "));
-  buoyPrintln(replybuffer);
-  // KH -- GPRS attachment status: 0 if not attached, 1 if attached
-  getReply(F("AT+CGATT?"), t);
-  buoyPrint(F("[DIAG] CGATT: "));
-  buoyPrintln(replybuffer);
-  // KH -- Operator Selection: format is <mode> (0 is auto select, 1 is manual), <format> (0 is long alphanum, 1 is short),
-  // <operator> (Verizon, AT&T, etc), <access technology> (7 for LTE)
-  getReply(F("AT+COPS?"), t);
-  buoyPrint(F("[DIAG] COPS: "));
-  buoyPrintln(replybuffer);
-  // KH -- APP Network Status: format is <mode> (0 for inactive, 1 for active), <access point name> (will give a real IP if connected)
-  getReply(F("AT+CNACT?"), t);
-  buoyPrint(F("[DIAG] CNACT: "));
-  buoyPrintln(replybuffer);
+  static const struct {
+    const __FlashStringHelper *cmd;
+    const __FlashStringHelper *label;
+  } checks[] = {
+    {F("AT+CPIN?"),  F("CPIN")},
+    {F("AT+CFUN?"),  F("CFUN")},
+    {F("AT+CREG?"),  F("CREG (circuit)")},
+    {F("AT+CGREG?"), F("CGREG (LTE data — used by [NET])")},
+    {F("AT+CSQ"),    F("CSQ")},
+    {F("AT+CGATT?"), F("CGATT")},
+    {F("AT+COPS?"),  F("COPS")},
+    {F("AT+CNACT?"), F("CNACT")},
+  };
+  for (size_t i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
+    getReply(checks[i].cmd, t);
+    buoyPrint(F("[DIAG] "));
+    buoyPrint(checks[i].label);
+    buoyPrint(F(": "));
+    buoyPrintln(replybuffer);
+  }
 }
 
 // KH -- checks modem activity with AT+CPIN for a specified amount of time, pauses ESP32 for 500ms if not
-bool BuoyModem::waitModemAtReady(uint32_t timeoutMs) {
+bool BuoyModem::waitModemAtReady(uint32_t timeoutMs)
+{
   const uint32_t deadline = millis() + timeoutMs;
   while ((int32_t)(deadline - millis()) > 0) {
     if (sendCheckReply(F("AT"), ok_reply, 2000)) {
@@ -161,7 +152,8 @@ bool BuoyModem::waitModemAtReady(uint32_t timeoutMs) {
 
 // KH -- Returns true if modem is operating at full functionality via AT+CFUN, sets to full functionality if not,
 // returns false if fails
-bool BuoyModem::ensureRadioOn() {
+bool BuoyModem::ensureRadioOn()
+{
   getReply(F("AT+CFUN?"), (uint16_t)3000);
   if (strstr(replybuffer, ": 1") != nullptr) {
     return true;
@@ -175,7 +167,8 @@ bool BuoyModem::ensureRadioOn() {
 }
 
 // KH -- tries to set CAT-M band to preferred settings and tries fallbacks, returns true if successful
-bool BuoyModem::applyLteCatMBandSettings() {
+bool BuoyModem::applyLteCatMBandSettings()
+{
   bool ok = true;
   if (!setPreferredMode(38)) {
     buoyPrintln("[MODEM] setPreferredMode(38) failed");
@@ -204,9 +197,10 @@ bool BuoyModem::applyLteCatMBandSettings() {
   return ok;
 }
 
-// KH -- if booting, applies CAT-M band settings and ensures radio is on. if recovering, checks 
+// KH -- if booting, applies CAT-M band settings and ensures radio is on. if recovering, checks
 // if functionality is minimal (required for band reconfig) beforehand
-bool BuoyModem::configureLteCatM(bool afterRecover) {
+bool BuoyModem::configureLteCatM(bool afterRecover)
+{
   buoyPrintln("[MODEM] LTE CAT-M, band " + String(LTE_CATM_BAND) + (afterRecover ? " (recover)" : " (boot)"));
   if (afterRecover) {
     if (!sendCheckReply(F("AT+CFUN=0"), ok_reply, 10000) && ensureRadioOn()) {
@@ -222,11 +216,15 @@ bool BuoyModem::configureLteCatM(bool afterRecover) {
 }
 
 // KH -- forces CIP stack rebuild
-void BuoyModem::invalidateCipStack() { m_CipStackUp = false; }
+void BuoyModem::invalidateCipStack()
+{
+  m_CipStackUp = false;
+}
 
 // KH -- First checks modem operational status, then configures functionality, provider, LTE band,
 // GPS attachment, error reporting, and DNS
-bool BuoyModem::configureNetwork(bool afterRecover) {
+bool BuoyModem::configureNetwork(bool afterRecover)
+{
   if (!waitModemAtReady()) {
     buoyPrintln("[MODEM] WARN: modem not AT-ready before config");
   }
@@ -257,17 +255,19 @@ bool BuoyModem::configureNetwork(bool afterRecover) {
 
 // SAPBR is the legacy GPRS bearer the B03/B05 firmware needs for AT+HTTP* + AT+HTTPSSL.
 // It is a separate bearer from CNACT and CIP, and on SIM7000 these can coexist.
-bool BuoyModem::ensurePdpActive() {
+bool BuoyModem::ensurePdpActive()
+{
   // GPRS uses AT+CNACT; activating again when already active returns "operation not allowed".
   if (wirelessConnStatus()) return true;
   if (!openWirelessConnection(true)) return false;
   return wirelessConnStatus();
 }
 
-// KH -- If the boolean flag returns false, the GPRS PDP (Packet Data Protocol) context is shut down, 
-// an IP connection is started and contained, access point is brought up, then GPRS wireless, then 
-// IP is checked for success 
-bool BuoyModem::bringUpCipStack() {
+// KH -- If the boolean flag returns false, the GPRS PDP (Packet Data Protocol) context is shut down,
+// an IP connection is started and contained, access point is brought up, then GPRS wireless, then
+// IP is checked for success
+bool BuoyModem::bringUpCipStack()
+{
   // The CIPSTART/CIPSEND/CIPRXGET stack is independent of CNACT.
   // Required order on SIM7000:
   //   CIPSHUT  -> IP INITIAL  (so CIPMUX/CIPRXGET can be set)
@@ -324,7 +324,8 @@ bool BuoyModem::bringUpCipStack() {
   return true;
 }
 
-bool BuoyModem::tcpConnectPlain(uint8_t linkId, const char *server, uint16_t port) {
+bool BuoyModem::tcpConnectPlain(uint8_t linkId, const char *server, uint16_t port)
+{
   // Best-effort socket cleanup; ignore errors when no socket is open.
   getReply(F("AT+CIPCLOSE="), linkId, 2000);
 
@@ -351,7 +352,8 @@ bool BuoyModem::tcpConnectPlain(uint8_t linkId, const char *server, uint16_t por
   return false;
 }
 
-bool BuoyModem::tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len) {
+bool BuoyModem::tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len)
+{
   flushInput();
 
   // AT+CIPSEND=<id>,<len> -- modem replies with ">" then waits for exactly <len> bytes.
@@ -391,7 +393,8 @@ bool BuoyModem::tcpSendPlain(uint8_t linkId, const char *packet, uint16_t len) {
   return false;
 }
 
-bool BuoyModem::tcpClosePlain(uint8_t linkId) {
+bool BuoyModem::tcpClosePlain(uint8_t linkId)
+{
   flushInput();
   char cmd[24];
   snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE=%u", linkId);
@@ -408,7 +411,8 @@ bool BuoyModem::tcpClosePlain(uint8_t linkId) {
   return false;
 }
 
-uint16_t BuoyModem::tcpAvailable(uint8_t linkId) {
+uint16_t BuoyModem::tcpAvailable(uint8_t linkId)
+{
   // CIPRXGET=4,<id> -> "+CIPRXGET: 4,<id>,<len>" then OK.
   uint16_t avail = 0;
   getReply(F("AT+CIPRXGET=4,"), linkId, 500);
@@ -416,7 +420,8 @@ uint16_t BuoyModem::tcpAvailable(uint8_t linkId) {
   return avail;
 }
 
-uint16_t BuoyModem::tcpRead(uint8_t linkId, uint8_t *buff, uint16_t len) {
+uint16_t BuoyModem::tcpRead(uint8_t linkId, uint8_t *buff, uint16_t len)
+{
   // CIPRXGET=2,<id>,<len> -> "+CIPRXGET: 2,<id>,<len>,<cnflen>" then raw data then OK.
   uint16_t avail = 0;
   getReply(F("AT+CIPRXGET=2,"), linkId, len, 1000);
@@ -446,12 +451,14 @@ uint16_t BuoyModem::tcpRead(uint8_t linkId, uint8_t *buff, uint16_t len) {
 // reference gets for free from WiFiClient.
 // ============================================================
 
-void ntripStreamReset() {
+void ntripStreamReset()
+{
   ntripStreamLen = 0;
   ntripStreamPos = 0;
 }
 
-void ntripStreamSeed(const uint8_t *data, uint16_t len) {
+void ntripStreamSeed(const uint8_t *data, uint16_t len)
+{
   ntripStreamLen = (len > (uint16_t)sizeof(ntripStreamBuf)) ? (uint16_t)sizeof(ntripStreamBuf) : len;
   ntripStreamPos = 0;
   if (ntripStreamLen > 0) {
@@ -461,7 +468,8 @@ void ntripStreamSeed(const uint8_t *data, uint16_t len) {
 
 // Refill the buffer from the modem when it is fully drained. Returns the number
 // of bytes newly buffered (0 = nothing available right now).
-uint16_t ntripStreamRefill() {
+uint16_t ntripStreamRefill()
+{
   if (ntripStreamPos < ntripStreamLen) {
     return ntripStreamLen - ntripStreamPos;
   }
@@ -480,7 +488,8 @@ uint16_t ntripStreamRefill() {
 // Blocking single-byte read from the stream buffer. Returns -1 on timeout.
 // Keeps the chunked decoder in sync when a chunk-size line or payload straddles
 // a refill boundary, exactly like the WiFi reference's readByteBlocking().
-int ntripStreamReadByte(uint32_t timeoutMs) {
+int ntripStreamReadByte(uint32_t timeoutMs)
+{
   uint32_t start = millis();
   while ((int32_t)(millis() - start) < (int32_t)timeoutMs) {
     if (ntripStreamPos < ntripStreamLen) {
@@ -492,7 +501,8 @@ int ntripStreamReadByte(uint32_t timeoutMs) {
   return -1;
 }
 
-bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
+bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len)
+{
   buoyPrintln("[HOLO] CIPSTART cloudsocket.hologram.io:9999");
   if (!tcpConnectPlain(LINK_HOLOGRAM, "cloudsocket.hologram.io", 9999)) {
     buoyPrintln("[HOLO] CIPSTART FAILED");
@@ -536,7 +546,8 @@ bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len) {
   return ok;
 }
 
-String BuoyModem::buildGGA() {
+void BuoyModem::buildGGA(const __FlashStringHelper *label)
+{
   // One PVT poll caches every NAV-PVT field used below; subsequent getters return
   // cached values instead of issuing eight separate UART polls that each block
   // RTCM injection to the F9P.
@@ -580,62 +591,69 @@ String BuoyModem::buildGGA() {
 
   char sentence[140];
   snprintf(sentence, sizeof(sentence), "$%s*%02X\r\n", body, checksum);
-  return (String)sentence;
+
+  tcpSendPlain(LINK_NTRIP, sentence, strlen(sentence));
+  lastGgaSentMs = millis();
+  if (label != nullptr) {
+    buoyPrint(F("[NTRIP] GGA Sent "));
+    buoyPrintln(label);
+  } else {
+    buoyPrintln(F("[NTRIP] GGA Sent"));
+  }
 }
 
 // ============================================================
 // Free function implementations
 // ============================================================
 
-void initializeGnssUart() {
+void initializeGnssUart()
+{
   buoyPrintln("=== Initializing ZED-F9P via UART ===");
-  buoyPrintln("TX_GPS pin: " + String (TX_GPS));
-  buoyPrintln("RX_GPS pin: " + String (RX_GPS));
-  
-  const long baudRates[] = {115200, 115200, 115200, 115200, 115200};
-  const int numRates = 5;
-  
-  for (int i = 0; i < numRates; i++) {
-    buoyPrint("Trying ");
-    buoyPrint(baudRates[i]);
-    buoyPrintln(" baud...");
-    
-    gpsSerial.begin(baudRates[i], SERIAL_8N1, RX_GPS, TX_GPS);
-    delay(1000);  // Give more time
-    
-    // Try to get any response
-    buoyPrintln("  Attempting myGNSS.begin()...");
-    
-    if (myGNSS.begin(gpsSerial)) {
-      buoyPrint("SUCCESS at ");
-      buoyPrint(baudRates[i]);
-      buoyPrintln(" baud!");
-      gpsUARTOnline = true;
-      
-      buoyPrintln("GPS UART connected!");
+  buoyPrintln("TX_GPS pin: " + String(TX_GPS));
+  buoyPrintln("RX_GPS pin: " + String(RX_GPS));
 
-      // Configure the UART we're talking to: accept RTCM3 in, send UBX out
-      myGNSS.setPortInput(COM_PORT_UART1, COM_TYPE_UBX | COM_TYPE_NMEA | COM_TYPE_RTCM3);
-      myGNSS.setUART1Output(COM_TYPE_UBX);
-      // Persist to flash so future boots don't depend on this reconfigure
-      myGNSS.saveConfiguration();
+  const uint32_t baudRate = 115200;
 
-      buoyPrintln("ZED-F9P: RTCM3 input enabled on UART1");
-      return;
-      
-    } else {
-      buoyPrintln("  Failed");
-    }
-    
-    gpsSerial.end();
-    delay(100);
+  buoyPrint("Trying ");
+  buoyPrint(baudRate);
+  buoyPrintln(" baud...");
+
+  gpsSerial.begin(baudRate, SERIAL_8N1, RX_GPS, TX_GPS);
+  delay(1000);  // Give more time
+
+  // Try to get any response
+  buoyPrintln("  Attempting myGNSS.begin()...");
+
+  if (myGNSS.begin(gpsSerial)) {
+    buoyPrint("SUCCESS at ");
+    buoyPrint(baudRate);
+    buoyPrintln(" baud!");
+    gpsUARTOnline = true;
+
+    buoyPrintln("GPS UART connected!");
+
+    // Configure the UART we're talking to: accept RTCM3 in, send UBX out
+    myGNSS.setPortInput(COM_PORT_UART1, COM_TYPE_UBX | COM_TYPE_NMEA | COM_TYPE_RTCM3);
+    myGNSS.setUART1Output(COM_TYPE_UBX);
+    // Persist to flash so future boots don't depend on this reconfigure
+    myGNSS.saveConfiguration();
+
+    buoyPrintln("ZED-F9P: RTCM3 input enabled on UART1");
+    return;
+
+  } else {
+    buoyPrintln("  Failed");
   }
-  
-  buoyPrintln("ERROR: GPS UART failed at all baud rates!");
+
+  gpsSerial.end();
+  delay(100);
+
+  buoyPrintln("ERROR: GPS UART failed!");
   gpsUARTOnline = false;
 }
 
-void initializeIna228() {
+void initializeIna228()
+{
   buoyPrintln("=== Initializing INA228 (I2C) ===");
   Wire.begin(I2C_SDA, I2C_SCL);
 
@@ -650,7 +668,8 @@ void initializeIna228() {
   buoyPrintln("INA228 OK");
 }
 
-void printPowerStatus() {
+void printPowerStatus()
+{
   if (!ina228Online) {
     return;
   }
@@ -673,7 +692,8 @@ void printPowerStatus() {
   buoyPrintln(" mW");
 }
 
-void ntripAttemptFailed() {
+void ntripAttemptFailed()
+{
   if (consecutiveNtripFailures < 255) {
     consecutiveNtripFailures++;
   }
@@ -681,17 +701,24 @@ void ntripAttemptFailed() {
   buoyPrintln(consecutiveNtripFailures);
 }
 
-void noteCellularActivity() {
+void noteCellularActivity()
+{
   lastCellularActivityMs = millis();
 }
 
-void invalidateDataPath(const __FlashStringHelper *reason) {
+void dropNtrip()
+{
+  modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+  ntripConnected = false;
+}
+
+void invalidateDataPath(const __FlashStringHelper *reason)
+{
   buoyPrint("[DATA] invalidate: ");
   buoyPrintln(reason);
 
   if (ntripConnected) {
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-    ntripConnected = false;
+    dropNtrip();
   }
   modem.invalidateCipStack();
   if (gprsEnabled) {
@@ -701,7 +728,8 @@ void invalidateDataPath(const __FlashStringHelper *reason) {
   lastNtripAttempt = 0;
 }
 
-void refreshGprs(const __FlashStringHelper *reason) {
+void refreshGprs(const __FlashStringHelper *reason)
+{
   static unsigned long lastRefreshMs = 0;
 
   if (millis() - lastRefreshMs < GPRS_REFRESH_COOLDOWN_MS) {
@@ -718,7 +746,8 @@ void refreshGprs(const __FlashStringHelper *reason) {
 
 // Sends "AT" at the current modemSS baud and returns true if the modem answers
 // (OK with echo off, or the echoed command with echo on).
-bool modemRespondsAt(uint16_t timeoutMs) {
+bool modemRespondsAt(uint16_t timeoutMs)
+{
   while (modemSS.available()) modemSS.read();
   const uint32_t deadline = millis() + timeoutMs;
   while ((int32_t)(deadline - millis()) > 0) {
@@ -742,7 +771,8 @@ bool modemRespondsAt(uint16_t timeoutMs) {
   return false;
 }
 
-bool modemLinkBegin() {
+bool modemLinkBegin()
+{
   // SIM7000 persists AT+IPR in NVRAM; after a session at 9600 it can cold-boot
   // at 9600 even though the factory default is 115200. Probe AT at 115200 first,
   // then fall back to 9600 and re-lock the modem to 115200 for this session.
@@ -768,7 +798,8 @@ bool modemLinkBegin() {
   return false;
 }
 
-void modemUartFlush() {
+void modemUartFlush()
+{
   const uint32_t deadline = millis() + 500;
   while ((int32_t)(deadline - millis()) > 0) {
     while (modemSS.available()) {
@@ -779,7 +810,8 @@ void modemUartFlush() {
 }
 
 // Match setup(): UART re-probe + boot-style network config (not CFUN=0 recover path).
-void modemPwrkeyPowerOff() {
+void modemPwrkeyPowerOff()
+{
   pinMode(BOTLETICS_PWRKEY, OUTPUT);
   digitalWrite(BOTLETICS_PWRKEY, HIGH);
   delay(100);
@@ -788,7 +820,17 @@ void modemPwrkeyPowerOff() {
   digitalWrite(BOTLETICS_PWRKEY, HIGH);
 }
 
-bool modemHardRecover(const __FlashStringHelper *reason) {
+void beginRecovery(const __FlashStringHelper *reason)
+{
+  invalidateDataPath(reason);
+  networkConnected = false;
+  consecutiveNtripFailures = 0;
+  modem.sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
+  delay(500);
+}
+
+bool modemHardRecover(const __FlashStringHelper *reason)
+{
   static unsigned long lastHardMs = 0;
 
   if (millis() - lastHardMs < MODEM_HARD_RECOVER_COOLDOWN_MS) {
@@ -800,12 +842,7 @@ bool modemHardRecover(const __FlashStringHelper *reason) {
   buoyPrint("[MODEM] hard recover: ");
   buoyPrintln(reason);
 
-  invalidateDataPath(reason);
-  networkConnected = false;
-  consecutiveNtripFailures = 0;
-
-  modem.sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
-  delay(500);
+  beginRecovery(reason);
 
   pinMode(MODEM_RST_PIN, OUTPUT);
   digitalWrite(MODEM_RST_PIN, LOW);
@@ -821,7 +858,8 @@ bool modemHardRecover(const __FlashStringHelper *reason) {
 }
 
 bool modemPowerCycleRecover(const __FlashStringHelper *reason,
-                              bool bypassCooldown) {
+                              bool bypassCooldown)
+{
   static unsigned long lastPowerCycleMs = 0;
 
   if (millis() - lastPowerCycleMs < MODEM_POWER_CYCLE_COOLDOWN_MS) {
@@ -833,12 +871,8 @@ bool modemPowerCycleRecover(const __FlashStringHelper *reason,
   buoyPrint("[MODEM] power cycle: ");
   buoyPrintln(reason);
 
-  invalidateDataPath(reason);
-  networkConnected = false;
-  consecutiveNtripFailures = 0;
+  beginRecovery(reason);
 
-  modem.sendCheckReply(F("AT+CIPSHUT"), F("SHUT OK"), 20000);
-  delay(500);
   modem.sendCheckReply(F("AT+CPOWD=1"), F("NORMAL POWER DOWN"), 5000);
   delay(1000);
   modemPwrkeyPowerOff();
@@ -863,7 +897,8 @@ bool modemPowerCycleRecover(const __FlashStringHelper *reason,
   return false;
 }
 
-void modemRecoverEscalated(const __FlashStringHelper *reason) {
+void modemRecoverEscalated(const __FlashStringHelper *reason)
+{
   if (modemPowerCycleRecover(reason, false)) {
     return;
   }
@@ -871,9 +906,13 @@ void modemRecoverEscalated(const __FlashStringHelper *reason) {
   modemHardRecover(reason);
 }
 
-bool cgregRegistered(uint8_t n) { return n == 1 || n == 5; }
+bool cgregRegistered(uint8_t n)
+{
+  return n == 1 || n == 5;
+}
 
-bool cellularLinkAlive() {
+bool cellularLinkAlive()
+{
   return (ntripConnected &&
           (millis() - lastReceivedRtcmMs < (long)CELLULAR_LINK_ALIVE_MS)) ||
          (lastCellularActivityMs > 0 &&
@@ -881,7 +920,8 @@ bool cellularLinkAlive() {
 }
 
 // CGREG can read 0 transiently while the CIP/NTRIP socket is still delivering RTCM.
-bool cgregLossConfirmed(uint8_t n) {
+bool cgregLossConfirmed(uint8_t n)
+{
   static uint8_t badStreak = 0;
 
   if (cgregRegistered(n)) {
@@ -895,7 +935,19 @@ bool cgregLossConfirmed(uint8_t n) {
   return badStreak >= CGREG_BAD_STREAK_LIMIT;
 }
 
-void networkStatusCheck() {
+const __FlashStringHelper *netLabel(uint8_t n)
+{
+  switch (n) {
+    case 1: return F("home");
+    case 5: return F("roaming");
+    case 2: return F("searching");
+    case 3: return F("denied");
+    default: return F("not registered");
+  }
+}
+
+void networkStatusCheck()
+{
   static unsigned long lastCheckMs = 0;
   static unsigned long lastDiagMs = 0;
   static unsigned long lastCgregIgnoreLogMs = 0;
@@ -907,19 +959,12 @@ void networkStatusCheck() {
   uint8_t rssi = modem.getRSSI();
   uint8_t n    = modem.getNetworkStatus();
 
-  const __FlashStringHelper *label =
-      (n == 1) ? F("home") :
-      (n == 5) ? F("roaming") :
-      (n == 2) ? F("searching") :
-      (n == 3) ? F("denied") :
-                 F("not registered");
-
   buoyPrint("[NET] CSQ=");
   buoyPrint(rssi);
   buoyPrint(" CGREG=");
   buoyPrint(n);
   buoyPrint(" (");
-  buoyPrint(label);
+  buoyPrint(netLabel(n));
   buoyPrintln(")");
 
   if (n == 0 && millis() - lastDiagMs > 30000) {
@@ -978,7 +1023,8 @@ void networkStatusCheck() {
   }
 }
 
-void postTelemetry() {
+void postTelemetry()
+{
   if (hologramDeviceKey[0] == '\0') {
     return;
   }
@@ -1086,7 +1132,24 @@ void postTelemetry() {
   }
 }
 
-void setupGprs() {
+// Poll AT+CGATT? up to 5 times (1s apart) for `expected`. Returns the 1-based try
+// number on success, 0 if never matched. Optionally logs each failed attempt.
+int waitForCgatt(const __FlashStringHelper *expected, bool logFailures)
+{
+  for (int attempt = 1; attempt <= 5; attempt++) {
+    if (modem.sendCheckReply(F("AT+CGATT?"), expected, 5000)) {
+      return attempt;
+    }
+    if (logFailures) {
+      buoyPrint("[GPRS] attempt "); buoyPrint(attempt); buoyPrintln("/5 failed");
+    }
+    if (attempt < 5) delay(1000);  // 1s between polls
+  }
+  return 0;
+}
+
+void setupGprs()
+{
   if (!networkConnected || gprsEnabled) return;
 
   // Poor signal: try again next loop
@@ -1103,39 +1166,29 @@ void setupGprs() {
   }
 
   modem.enableGPRS(false);
-  for (int i = 0; i < 5; i++)
-  {
-    delay(1000);
-    if (modem.sendCheckReply(F("AT+CGATT?"), F("+CGATT: 0"), 5000))
-    {
-      buoyPrint("[GPRS] detached on try ");
-      buoyPrintln(i + 1);
-      break;
-    }
+  int detachTry = waitForCgatt(F("+CGATT: 0"), false);
+  if (detachTry > 0) {
+    buoyPrint("[GPRS] detached on try ");
+    buoyPrintln(detachTry);
   }
 
   modem.enableGPRS(true);
-  for (int attempt = 0; attempt < 5; attempt++) 
-  {
-    if (modem.sendCheckReply(F("AT+CGATT?"), F("+CGATT: 1"), 5000)) 
-    {
-      gprsEnabled = true;
-      lastGprsEnabledMs = millis();
-      noteCellularActivity();
-      consecutiveNtripFailures = 0;
-      buoyPrintln("[GPRS] enabled");
-      delay(1000);
-      return;
-    }
-    buoyPrint("[GPRS] attempt "); buoyPrint(attempt + 1); buoyPrintln("/5 failed");
-    if ((attempt + 1) < 5) delay(1000);  // 1s between polls
+  if (waitForCgatt(F("+CGATT: 1"), true) == 0) {
+    buoyPrintln("[GPRS] all attempts failed");
+    delay(10000);
+    return;
   }
 
-  buoyPrintln("[GPRS] all attempts failed");
-  delay(10000);
+  gprsEnabled = true;
+  lastGprsEnabledMs = millis();
+  noteCellularActivity();
+  consecutiveNtripFailures = 0;
+  buoyPrintln("[GPRS] enabled");
+  delay(1000);
 }
 
-void beginNTRIPClient() {
+void beginNTRIPClient()
+{
   buoyPrint("[NTRIP] connecting to "); buoyPrint(casterHost);
   buoyPrint(":"); buoyPrintln(casterPort);
 
@@ -1179,7 +1232,7 @@ void beginNTRIPClient() {
   uint16_t available = modem.tcpAvailable(BuoyModem::LINK_NTRIP);
   if (available == 0) {
     buoyPrintln("[NTRIP] no response from caster");
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+    dropNtrip();
     ntripAttemptFailed();
     return;
   }
@@ -1225,13 +1278,13 @@ void beginNTRIPClient() {
 
   if (!foundHeaderEnd) {
     buoyPrintln("[NTRIP] Failed to read full HTTP headers / timeout");
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+    dropNtrip();
     ntripAttemptFailed();
     return;
   }
 
-  bool ok = strstr(responseBuffer, "ICY 200") != nullptr || 
-            strstr(responseBuffer, "HTTP/1.0 200") != nullptr || 
+  bool ok = strstr(responseBuffer, "ICY 200") != nullptr ||
+            strstr(responseBuffer, "HTTP/1.0 200") != nullptr ||
             strstr(responseBuffer, "HTTP/1.1 200") != nullptr;
 
   bool unauth = strstr(responseBuffer, " 401") != nullptr;
@@ -1244,33 +1297,28 @@ void beginNTRIPClient() {
     lastReceivedRtcmMs = millis();
     noteCellularActivity();
 
-    String gga = modem.buildGGA();
-    modem.tcpSendPlain(BuoyModem::LINK_NTRIP, gga.c_str(), gga.length());
-    lastGgaSentMs = millis();
-    buoyPrintln("[NTRIP] GGA Sent");
+    modem.buildGGA();
   } else if (unauth) {
     buoyPrintln("[NTRIP] 401 unauthorized");
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+    dropNtrip();
     ntripAttemptFailed();
   } else if (notfound) {
     buoyPrintln("[NTRIP] 404 mount not found");
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+    dropNtrip();
     ntripAttemptFailed();
   } else {
     buoyPrintln("[NTRIP] unrecognized response");
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
+    dropNtrip();
     ntripAttemptFailed();
   }
 }
 
-void handleNTRIPData() {
+void handleNTRIPData()
+{
   // If not connected, or if no data is expected, just send GGA and return.
   if (!ntripConnected) {
     if (millis() - lastGgaSentMs > ggaIntervalMs) {
-      String gga = modem.buildGGA();
-      modem.tcpSendPlain(BuoyModem::LINK_NTRIP, gga.c_str(), gga.length());
-      lastGgaSentMs = millis();
-      buoyPrintln("[NTRIP] GGA Sent (idle)");
+      modem.buildGGA(F("(idle)"));
     }
     return;
   }
@@ -1286,10 +1334,7 @@ void handleNTRIPData() {
 
     // Check for GGA interval
     if (millis() - lastGgaSentMs > ggaIntervalMs) {
-      String gga = modem.buildGGA();
-      modem.tcpSendPlain(BuoyModem::LINK_NTRIP, gga.c_str(), gga.length());
-      lastGgaSentMs = millis();
-      buoyPrintln("[NTRIP] GGA Sent");
+      modem.buildGGA();
     }
 
     // No data buffered locally and nothing waiting in the modem socket.
@@ -1298,8 +1343,7 @@ void handleNTRIPData() {
       // If no data, check for timeout
       if (millis() - lastReceivedRtcmMs > maxTimeBeforeHangupMs) {
         buoyPrintln("[NTRIP] RTCM timeout, disconnecting");
-        modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-        ntripConnected = false;
+        dropNtrip();
         ntripAttemptFailed();
         return;
       }
@@ -1314,7 +1358,7 @@ void handleNTRIPData() {
     int idx = 0;
     bool sizeReadOk = true;
     while (idx < (int)sizeof(chunkSizeBuf) - 1) {
-      int b = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+      int b = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
       if (b < 0) { sizeReadOk = false; break; }
       if (b == '\n') break;
       if (b != '\r') chunkSizeBuf[idx++] = (char)b;
@@ -1323,8 +1367,7 @@ void handleNTRIPData() {
 
     if (!sizeReadOk) {
       buoyPrintln("[NTRIP] timeout reading chunk size — dropping socket");
-      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-      ntripConnected = false;
+      dropNtrip();
       return;
     }
 
@@ -1332,15 +1375,13 @@ void handleNTRIPData() {
 
     if (chunkSize == 0) {
       buoyPrintln("[NTRIP] Chunked stream ended (0-size)");
-      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-      ntripConnected = false;
+      dropNtrip();
       return;
     }
 
     if (chunkSize < 0 || chunkSize > 4096) {
       buoyPrintln("[NTRIP] Oversized chunk, likely desync (chunkSize=" + String(chunkSize) + ")");
-      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-      ntripConnected = false;
+      dropNtrip();
       return;
     }
 
@@ -1351,11 +1392,10 @@ void handleNTRIPData() {
       int want = (remaining > (long)sizeof(buffer)) ? (int)sizeof(buffer) : (int)remaining;
       int got = 0;
       while (got < want) {
-        int b = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+        int b = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
         if (b < 0) {
           buoyPrintln("[NTRIP] Payload read failed");
-          modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-          ntripConnected = false;
+          dropNtrip();
           return;
         }
         buffer[got++] = (uint8_t)b;
@@ -1369,12 +1409,11 @@ void handleNTRIPData() {
     }
 
     // Consume trailing CRLF
-    int b1 = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
-    int b2 = ntripStreamReadByte(5000); // 5s timeout (matches WiFi reference)
+    int b1 = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
+    int b2 = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
     if (b1 != '\r' || b2 != '\n') {
       buoyPrintln("[NTRIP] Trailing CRLF mismatch");
-      modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-      ntripConnected = false;
+      dropNtrip();
       return;
     }
   }
@@ -1395,7 +1434,8 @@ void handleNTRIPData() {
   }
 }
 
-void monitorConnectionHealth() {
+void monitorConnectionHealth()
+{
   if (!networkConnected) return;
 
   static unsigned long lastHealthCheck = 0;
@@ -1459,26 +1499,23 @@ void monitorConnectionHealth() {
   }
 }
 
-void updateStatusLED() {
-
-  if (ntripConnected) {
-    digitalWrite(STATUS_LED, HIGH);  // Solid = NTRIP active
-    return;
-  }
-  
-  digitalWrite(STATUS_LED, LOW);
+void updateStatusLED()
+{
+  digitalWrite(STATUS_LED, ntripConnected ? HIGH : LOW);  // Solid = NTRIP active
 }
 
-void IRAM_ATTR shutdownISR() {
+void IRAM_ATTR shutdownISR()
+{
   shutdownRequested = true;
 }
 
-void gracefulShutdown() {
+void gracefulShutdown()
+{
   buoyPrintln("\n=== SHUTDOWN REQUESTED ===");
 
   // reset shutdown flag
   shutdownRequested = false;
-  
+
   // Blink LED 3 times to confirm shutdown
   for (int i = 0; i < 3; i++) {
     digitalWrite(STATUS_LED, HIGH);
@@ -1486,15 +1523,14 @@ void gracefulShutdown() {
     digitalWrite(STATUS_LED, LOW);
     delay(100);
   }
-  
+
   // Close NTRIP/TCP connection
   if (ntripConnected) {
     buoyPrintln("Closing NTRIP connection...");
-    modem.tcpClosePlain(BuoyModem::LINK_NTRIP);
-    ntripConnected = false;
+    dropNtrip();
     delay(1000);
   }
-  
+
   // Disable GPRS
   if (gprsEnabled) {
     buoyPrintln("Disabling GPRS...");
@@ -1502,43 +1538,36 @@ void gracefulShutdown() {
     gprsEnabled = false;
     delay(1000);
   }
-  
+
   // Power down modem
   buoyPrintln("Powering down modem...");
   modem.sendCheckReply(F("AT+CPOWD=1"), F("NORMAL POWER DOWN"), 5000);
   delay(2000);
-  
+
   // Turn off LED
   digitalWrite(STATUS_LED, LOW);
-  
+
   // Configure wake-up source
   buoyPrintln("Entering sleep...");
   buoyPrintln("Press button again to wake up.");
   Serial.flush();  // Make sure message prints before sleep
-  
+
   // Configure pin 0 to wake on LOW (button pressed)
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
-  
-  // Enter deep sleep // this saves more power but it turns off bluetooth
-  // esp_deep_sleep_start();
-  // enter light sleep // uses more power but keeps bluetooth on
-  esp_light_sleep_start();
-  
+
+  // esp_deep_sleep_start();   // this saves more power but it turns off bluetooth
+  esp_light_sleep_start();  // uses more power but keeps bluetooth on
 }
 
-// ============================================================
-// BLE helpers
-// ============================================================
-
-// ============================================================
 // BLE server callbacks
-// ============================================================
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {
+  void onConnect(BLEServer* pServer)
+  {
     bleConnected = true;
     buoyPrintln("BLE connected.");
   }
-  void onDisconnect(BLEServer* pServer) {
+  void onDisconnect(BLEServer* pServer)
+  {
     bleConnected = false;
     buoyPrintln("BLE disconnected - restarting advertising");
     pServer->startAdvertising();
@@ -1546,20 +1575,20 @@ class ServerCallbacks : public BLEServerCallbacks {
 };
 
 class RxCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pChar) {
+  void onWrite(BLECharacteristic* pChar)
+  {
     strncpy(bleRxBuf, pChar->getValue().c_str(), sizeof(bleRxBuf) - 1);
     bleRxBuf[sizeof(bleRxBuf) - 1] = '\0';
     bleDataReady = true;
   }
 };
 
-// ============================================================
 // Print GPS status over BLE
-// ============================================================
-void broadcastGPS() {
+void broadcastGPS()
+{
   if (!bleConnected) return;
   if (!myGNSS.getPVT()) return;
-  
+
   float lat     = myGNSS.getLatitude()        / 10000000.0;
   float lon     = myGNSS.getLongitude()       / 10000000.0;
   float alt     = myGNSS.getAltitudeMSL()     / 1000.0;
@@ -1568,17 +1597,15 @@ void broadcastGPS() {
   uint8_t carrier = myGNSS.getCarrierSolutionType();
   String rtk = (carrier == 2) ? "FIX" : (carrier == 1) ? "FLOAT" : "NONE";
   buoyPrintln("GPS " + String(lat, 7) + " " + String(lon, 7) + "\n"
-              "alt=" + String(alt, 1) + "m\n" + 
+              "alt=" + String(alt, 1) + "m\n" +
               "RTK=" + rtk + "\n" +
-              "horizAcc=" + String(hAcc, 3) + "m\n" + 
+              "horizAcc=" + String(hAcc, 3) + "m\n" +
               "sats=" + String(sats));
 }
 
-// ============================================================
 // setup() and loop()
-// ============================================================
-
-void setup() {
+void setup()
+{
   // USB Debug Serial
   Serial.begin(115200);
 
@@ -1619,7 +1646,7 @@ void setup() {
   // Initialize Modem
   pinMode(RST, OUTPUT);
   digitalWrite(RST, HIGH);
-  
+
   buoyPrintln("Powering on modem...");
   modem.powerOn(BOTLETICS_PWRKEY);
   delay(5000);
@@ -1631,7 +1658,7 @@ void setup() {
   }
 
   buoyPrintln("SIM7000 detected");
-  
+
   uint8_t imeiLen = modem.getIMEI(imei);
   if (imeiLen > 0) {
     buoyPrint("Module IMEI: ");
@@ -1643,7 +1670,8 @@ void setup() {
   buoyPrintln("Setup complete — waiting for CGREG registration\n");
 }
 
-void loop() {
+void loop()
+{
   // Handle user AT commands
   if (Serial.available()) {
     buoyPrint("modem> ");
@@ -1656,13 +1684,13 @@ void loop() {
     }
     return;
   }
-  
+
   // Network management
   networkStatusCheck();
   setupGprs();
-  
+
   // NTRIP connection management
-  if (gprsEnabled && !ntripConnected && 
+  if (gprsEnabled && !ntripConnected &&
       (millis() - lastNtripAttempt > ntripRetryInterval)) {
     beginNTRIPClient();
     lastNtripAttempt = millis();
@@ -1671,7 +1699,7 @@ void loop() {
   // Handle NTRIP data (receives RTCM and sends to GPS via UART)
   // check for ntrip connection performed in-function
   handleNTRIPData();
-  
+
   monitorConnectionHealth();
 
   // telemetry sent every 60s
@@ -1687,7 +1715,7 @@ void loop() {
       broadcastGPS();
     }
   }
-  
+
   updateStatusLED();
 
   // Check for shutdown request

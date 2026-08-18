@@ -13,23 +13,13 @@
 void buoyPrint(const String& msg);
 void buoyPrintln(const String& msg);
 
-inline void buoyPrint(int v)                  { buoyPrint(String(v)); }
-inline void buoyPrint(unsigned int v)         { buoyPrint(String(v)); }
-inline void buoyPrint(long v)                 { buoyPrint(String(v)); }
-inline void buoyPrint(unsigned long v)        { buoyPrint(String(v)); }
-inline void buoyPrint(uint8_t v)              { buoyPrint(String(v)); }
-inline void buoyPrint(uint16_t v)             { buoyPrint(String(v)); }
-inline void buoyPrint(float v, int p = 2)     { buoyPrint(String(v, p)); }
-inline void buoyPrint(double v, int p = 2)    { buoyPrint(String(v, p)); }
+template <typename T> inline void buoyPrint(T v) { buoyPrint(String(v)); }
+inline void buoyPrint(float v, int p = 2)  { buoyPrint(String(v, p)); }
+inline void buoyPrint(double v, int p = 2) { buoyPrint(String(v, p)); }
 
-inline void buoyPrintln(int v)                { buoyPrintln(String(v)); }
-inline void buoyPrintln(unsigned int v)       { buoyPrintln(String(v)); }
-inline void buoyPrintln(long v)               { buoyPrintln(String(v)); }
-inline void buoyPrintln(unsigned long v)      { buoyPrintln(String(v)); }
-inline void buoyPrintln(uint8_t v)            { buoyPrintln(String(v)); }
-inline void buoyPrintln(uint16_t v)           { buoyPrintln(String(v)); }
-inline void buoyPrintln(float v, int p = 2)   { buoyPrintln(String(v, p)); }
-inline void buoyPrintln(double v, int p = 2)  { buoyPrintln(String(v, p)); }
+template <typename T> inline void buoyPrintln(T v) { buoyPrintln(String(v)); }
+inline void buoyPrintln(float v, int p = 2)  { buoyPrintln(String(v, p)); }
+inline void buoyPrintln(double v, int p = 2) { buoyPrintln(String(v, p)); }
 
 extern bool bleConnected;
 
@@ -45,7 +35,7 @@ extern bool bleConnected;
 #endif
 
 #define STATUS_LED 13  // Built-in LED for status
-#define TX_GPS 12      // ESP32 TX2 to GPS RX  
+#define TX_GPS 12      // ESP32 TX2 to GPS RX
 #define RX_GPS 27      // ESP32 RX2 to GPS TX
 #define SHUTDOWN_BTN 0 // for shutdown
 #define I2C_SDA 23     // ESP32 Thing Plus (WRL-15663) Qwiic SDA
@@ -91,23 +81,14 @@ extern bool bleConnected;
 #ifndef MODEM_PWRKEY_OFF_MS
 #define MODEM_PWRKEY_OFF_MS 1600UL
 #endif
-#ifndef MODEM_POWER_OFF_SETTLE_MS
-#define MODEM_POWER_OFF_SETTLE_MS 8000UL
-#endif
 #ifndef MODEM_POST_POWER_ON_MS
 #define MODEM_POST_POWER_ON_MS 5000UL
-#endif
-#ifndef MODEM_BOOT_POWER_ON_MS
-#define MODEM_BOOT_POWER_ON_MS 5000UL
 #endif
 #ifndef MODEM_POST_RST_MS
 #define MODEM_POST_RST_MS 5000UL
 #endif
 #ifndef MODEM_FULL_POWER_OFF_SETTLE_MS
 #define MODEM_FULL_POWER_OFF_SETTLE_MS (20UL * 1000UL)
-#endif
-#ifndef REGISTERED_STABLE_MS
-#define REGISTERED_STABLE_MS (2UL * 60UL * 1000UL)
 #endif
 #ifndef MODEM_STUCK_FORCE_CYCLE_MS
 #define MODEM_STUCK_FORCE_CYCLE_MS (30UL * 60UL * 1000UL)
@@ -156,7 +137,7 @@ public:
   bool configureLteCatM(bool afterRecover = false);
   void invalidateCipStack();
   bool configureNetwork(bool afterRecover = false);
-  String buildGGA();
+  void buildGGA(const __FlashStringHelper *label = nullptr);
 
 private:
   bool m_CipStackUp = false;
@@ -171,7 +152,8 @@ extern unsigned long lastCellularActivityMs;
 extern unsigned long lastGprsEnabledMs;
 extern uint8_t consecutiveNtripFailures;
 extern unsigned long lastReceivedRtcmMs;
-extern int maxTimeBeforeHangupMs;
+extern unsigned long maxTimeBeforeHangupMs;
+extern unsigned long lastGgaSentMs;
 extern const unsigned long ntripRetryInterval;
 extern BuoyModem modem;
 extern HardwareSerial modemSS;
