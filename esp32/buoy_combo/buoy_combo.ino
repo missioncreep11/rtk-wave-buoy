@@ -1,8 +1,8 @@
 /* buoy_combo.ino */
-// NTRIP casters use plain TCP (e.g. port 2101). BotleticsSIM7000.h defaults BOTLETICS_SSL=1.
-#ifndef BOTLETICS_SSL
-#define BOTLETICS_SSL 0
-#endif
+// All TCP here is plain (AT+CIPSTART/CIPSEND via BuoyModem::tcp*Plain). The
+// sketch never calls the library's SSL-gated TCPconnect/HTTP paths, so the
+// BOTLETICS_SSL default (=1, unconditionally redefined inside
+// BotleticsSIM7000.h) has no effect on NTRIP or Hologram traffic.
 
 #include <Arduino.h>
 
@@ -59,7 +59,7 @@ const char hologramDeviceKey[] = "";
 #endif
 
 // Pin Definitions
-#define SIMCOM_7000
+#define SIMCOM_7000  // examples-only macro; the library auto-detects _type in begin()
 #define BOTLETICS_PWRKEY 18
 #define RST 5
 #define TX_MODEM 17  // ESP32 TX1 to Modem RX
@@ -100,6 +100,11 @@ uint8_t consecutiveNtripFailures = 0;
 static uint8_t ntripStreamBuf[2048];
 static uint16_t ntripStreamLen = 0;
 static uint16_t ntripStreamPos = 0;
+
+// Body framing selected from caster response headers on connect:
+// true = HTTP chunked (NTRIP/2.0 casters such as Polaris)
+// false = raw RTCM straight after the blank line (NTRIP/1.0 "ICY" casters)
+bool ntripChunkedStream = false;
 
 // Configuration
 char imei[16] = {0};
@@ -499,6 +504,31 @@ int ntripStreamReadByte(uint32_t timeoutMs)
     delay(1);
   }
   return -1;
+}
+
+// True when the caster response headers declare chunked transfer encoding
+// (NTRIP/2.0). NTRIP/1.0 "ICY 200 OK" responses carry no body framing: raw
+// RTCM starts immediately after the blank line. Header blocks are a few
+// hundred bytes, well under this window.
+bool responseIsChunked(const char *headers, uint16_t len)
+{
+  static char lower[512];
+  if (len >= sizeof(lower)) len = (uint16_t)(sizeof(lower) - 1);
+  for (uint16_t i = 0; i < len; i++) {
+    lower[i] = (char)tolower((unsigned char)headers[i]);
+  }
+  lower[len] = '\0';
+
+  const char *te = strstr(lower, "transfer-encoding:");
+  if (te == nullptr) {
+    return false;
+  }
+  const char *eol = strchr(te, '\n');
+  if (eol != nullptr) {
+    // Bound the token search to the Transfer-Encoding line
+    const_cast<char *>(eol)[0] = '\0';
+  }
+  return strstr(te, "chunked") != nullptr;
 }
 
 bool BuoyModem::sendHologramCloudMessage(const char *msg, uint16_t len)
@@ -1050,7 +1080,9 @@ void postTelemetry()
   double lon = 0.0;
   double altM = 0.0;
 
-  if (gpsUARTOnline && ntripConnected && myGNSS.getPVT()) {
+  // Position reports whenever the ZED is talking — telemetry should not go
+  // blind exactly when the NTRIP link is degraded.
+  if (gpsUARTOnline && myGNSS.getPVT()) {
     havePvt = true;
     fixType = myGNSS.getFixType();
     carrSoln = myGNSS.getCarrierSolutionType();
@@ -1152,9 +1184,11 @@ void setupGprs()
 {
   if (!networkConnected || gprsEnabled) return;
 
-  // Poor signal: try again next loop
+  // No signal at all: try again next loop. CSQ=99 ("not measurable") keeps
+  // going — some carriers read 99 while CGREG=1/5 and data flows fine, and
+  // stalling here would deadlock GPRS with no recovery trigger.
   uint8_t rssi = modem.getRSSI();
-  if (rssi == 0 || rssi == 99) {
+  if (rssi == 0) {
     return;
   }
 
@@ -1254,10 +1288,15 @@ void beginNTRIPClient()
           responseLen += got;
           responseBuffer[responseLen] = '\0';
 
-          // Check if we've received the full HTTP headers (\r\n\r\n)
           const char *headerEnd = strstr(responseBuffer, "\r\n\r\n");
           if (headerEnd != nullptr) {
             foundHeaderEnd = true;
+            // Pick the body framing from the headers: chunked (NTRIP/2.0,
+            // e.g. Polaris) or raw RTCM (NTRIP/1.0 "ICY" casters).
+            ntripChunkedStream =
+                responseIsChunked(responseBuffer, (uint16_t)(headerEnd - responseBuffer));
+            buoyPrintln(ntripChunkedStream ? "[NTRIP] chunked stream (NTRIP/2.0)"
+                                           : "[NTRIP] raw RTCM stream");
             // Seed the chunked decoder with any body overflow that arrived in
             // the same read as the headers — without this the first chunk
             // header is lost and the decoder desyncs immediately.
@@ -1315,18 +1354,10 @@ void beginNTRIPClient()
 
 void handleNTRIPData()
 {
-  // If not connected, or if no data is expected, just send GGA and return.
   if (!ntripConnected) {
-    if (millis() - lastGgaSentMs > ggaIntervalMs) {
-      modem.buildGGA(F("(idle)"));
-    }
     return;
   }
 
-  // Handle NTRIP data (receives RTCM and sends to GPS via UART).
-  // Bytes come from ntripStreamBuf, refilled with block tcpRead() calls so the
-  // AT CIPRXGET cost is amortized instead of one round-trip per byte.
-  // Process as many chunks as possible within a reasonable timeframe (e.g., 200ms).
   uint32_t startTime = millis();
   uint16_t forwarded = 0;
 
@@ -1347,79 +1378,20 @@ void handleNTRIPData()
         ntripAttemptFailed();
         return;
       }
-      break; // No more data to read for now
+      break;
     }
 
-    // --- Chunked Stream Decoder ---
-    // Read hex chunk-size line, terminated by CRLF.
-    // Polaris paces corrections in ~1Hz bursts; the 5s blocking timeout matches
-    // the proven WiFi reference so a normal inter-chunk gap doesn't drop us.
-    char chunkSizeBuf[12];
-    int idx = 0;
-    bool sizeReadOk = true;
-    while (idx < (int)sizeof(chunkSizeBuf) - 1) {
-      int b = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
-      if (b < 0) { sizeReadOk = false; break; }
-      if (b == '\n') break;
-      if (b != '\r') chunkSizeBuf[idx++] = (char)b;
-    }
-    chunkSizeBuf[idx] = '\0';
-
-    if (!sizeReadOk) {
-      buoyPrintln("[NTRIP] timeout reading chunk size — dropping socket");
-      dropNtrip();
-      return;
-    }
-
-    long chunkSize = strtol(chunkSizeBuf, NULL, 16);
-
-    if (chunkSize == 0) {
-      buoyPrintln("[NTRIP] Chunked stream ended (0-size)");
-      dropNtrip();
-      return;
-    }
-
-    if (chunkSize < 0 || chunkSize > 4096) {
-      buoyPrintln("[NTRIP] Oversized chunk, likely desync (chunkSize=" + String(chunkSize) + ")");
-      dropNtrip();
-      return;
-    }
-
-    // Consume exactly chunkSize bytes
-    long remaining = chunkSize;
-    uint8_t buffer[128];
-    while (remaining > 0) {
-      int want = (remaining > (long)sizeof(buffer)) ? (int)sizeof(buffer) : (int)remaining;
-      int got = 0;
-      while (got < want) {
-        int b = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
-        if (b < 0) {
-          buoyPrintln("[NTRIP] Payload read failed");
-          dropNtrip();
-          return;
-        }
-        buffer[got++] = (uint8_t)b;
-      }
-
-      if (gpsUARTOnline) gpsSerial.write(buffer, got);
-      forwarded += got;
-      remaining -= got;
-      lastReceivedRtcmMs = millis();
-      noteCellularActivity();
-    }
-
-    // Consume trailing CRLF
-    int b1 = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
-    int b2 = ntripStreamReadByte(ntripReadTimeoutMs); // matches WiFi reference
-    if (b1 != '\r' || b2 != '\n') {
-      buoyPrintln("[NTRIP] Trailing CRLF mismatch");
-      dropNtrip();
-      return;
+    if (ntripChunkedStream) {
+      // NTRIP/2.0 (Polaris): hex size line -> payload -> trailing CRLF.
+      long got = ntripForwardChunked();
+      if (got < 0) return;  // socket dropped inside the decoder
+      forwarded += (uint16_t)got;
+    } else {
+      // NTRIP/1.0 "ICY" casters: raw RTCM, no body framing.
+      forwarded += ntripForwardRaw();
     }
   }
 
-  // Throughput + backlog telemetry so a healthy stream is distinguishable from
-  // a desync from a dead socket without guessing.
   static unsigned long lastRtcmReport = 0;
   static uint32_t bytesSinceReport = 0;
   bytesSinceReport += forwarded;
@@ -1432,6 +1404,95 @@ void handleNTRIPData()
   if (forwarded > 0) {
     buoyPrint("[RTCM] to ZED: "); buoyPrintln(forwarded);
   }
+}
+
+// Forward buffered RTCM verbatim to the ZED (raw NTRIP/1.0 streams).
+// The caller's no-data gate ensures the buffer or socket has bytes; a 0 return
+// just means a refill race, retried on the next loop pass.
+uint16_t ntripForwardRaw()
+{
+  uint16_t avail = ntripStreamLen - ntripStreamPos;
+  if (avail == 0) {
+    if (ntripStreamRefill() == 0) return 0;
+    avail = ntripStreamLen - ntripStreamPos;
+    if (avail == 0) return 0;
+  }
+  if (gpsUARTOnline) gpsSerial.write(ntripStreamBuf + ntripStreamPos, avail);
+  ntripStreamPos = ntripStreamLen;
+  lastReceivedRtcmMs = millis();
+  noteCellularActivity();
+  return avail;
+}
+
+// Decode one chunk (hex size line -> payload -> trailing CRLF) and forward the
+// payload to the ZED. Returns payload bytes forwarded, or -1 after dropping
+// the socket. Polaris paces corrections in ~1Hz bursts
+long ntripForwardChunked()
+{
+  char chunkSizeBuf[12];
+  int idx = 0;
+  bool sizeReadOk = true;
+  while (idx < (int)sizeof(chunkSizeBuf) - 1) {
+    int b = ntripStreamReadByte(ntripReadTimeoutMs);
+    if (b < 0) { sizeReadOk = false; break; }
+    if (b == '\n') break;
+    if (b != '\r') chunkSizeBuf[idx++] = (char)b;
+  }
+  chunkSizeBuf[idx] = '\0';
+
+  if (!sizeReadOk) {
+    buoyPrintln("[NTRIP] timeout reading chunk size — dropping socket");
+    dropNtrip();
+    return -1;
+  }
+
+  long chunkSize = strtol(chunkSizeBuf, NULL, 16);
+
+  if (chunkSize == 0) {
+    buoyPrintln("[NTRIP] Chunked stream ended (0-size)");
+    dropNtrip();
+    return -1;
+  }
+
+  if (chunkSize < 0 || chunkSize > 4096) {
+    buoyPrintln("[NTRIP] Oversized chunk (chunkSize=" + String(chunkSize) +
+                ") — desync or non-chunked caster");
+    dropNtrip();
+    return -1;
+  }
+
+  long remaining = chunkSize;
+  uint8_t buffer[128];
+  long total = 0;
+  while (remaining > 0) {
+    int want = (remaining > (long)sizeof(buffer)) ? (int)sizeof(buffer) : (int)remaining;
+    int got = 0;
+    while (got < want) {
+      int b = ntripStreamReadByte(ntripReadTimeoutMs);
+      if (b < 0) {
+        buoyPrintln("[NTRIP] Payload read failed");
+        dropNtrip();
+        return -1;
+      }
+      buffer[got++] = (uint8_t)b;
+    }
+
+    if (gpsUARTOnline) gpsSerial.write(buffer, got);
+    total += got;
+    remaining -= got;
+  }
+  lastReceivedRtcmMs = millis();
+  noteCellularActivity();
+
+  // Consume trailing CRLF
+  int b1 = ntripStreamReadByte(ntripReadTimeoutMs);
+  int b2 = ntripStreamReadByte(ntripReadTimeoutMs);
+  if (b1 != '\r' || b2 != '\n') {
+    buoyPrintln("[NTRIP] Trailing CRLF mismatch");
+    dropNtrip();
+    return -1;
+  }
+  return total;
 }
 
 void monitorConnectionHealth()
@@ -1589,10 +1650,10 @@ void broadcastGPS()
   if (!bleConnected) return;
   if (!myGNSS.getPVT()) return;
 
-  float lat     = myGNSS.getLatitude()        / 10000000.0;
-  float lon     = myGNSS.getLongitude()       / 10000000.0;
-  float alt     = myGNSS.getAltitudeMSL()     / 1000.0;
-  float hAcc    = myGNSS.getHorizontalAccEst()/ 1000.0;
+  double lat     = myGNSS.getLatitude()        / 10000000.0;
+  double lon     = myGNSS.getLongitude()       / 10000000.0;
+  double alt     = myGNSS.getAltitudeMSL()     / 1000.0;
+  double hAcc    = myGNSS.getHorizontalAccEst()/ 1000.0;
   uint8_t sats  = myGNSS.getSIV();
   uint8_t carrier = myGNSS.getCarrierSolutionType();
   String rtk = (carrier == 2) ? "FIX" : (carrier == 1) ? "FLOAT" : "NONE";
@@ -1697,13 +1758,10 @@ void loop()
   }
 
   // Handle NTRIP data (receives RTCM and sends to GPS via UART)
-  // check for ntrip connection performed in-function
   handleNTRIPData();
 
   monitorConnectionHealth();
 
-  // telemetry sent every 60s
-  // check for gprs conn performed in-function
   postTelemetry();
 
   // Power + GPS status every 5 seconds
@@ -1711,17 +1769,16 @@ void loop()
     lastFixStatusPrint = millis();
     printPowerStatus();
 
-    if (gpsUARTOnline) {  // single poll, populates everything below
+    if (gpsUARTOnline) {
       broadcastGPS();
     }
   }
 
   updateStatusLED();
 
-  // Check for shutdown request
   if (shutdownRequested) {
     gracefulShutdown();
   }
 
-  delay(10);  // Reduced from 1000ms for better responsiveness
+  delay(10);
 }

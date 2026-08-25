@@ -12,19 +12,19 @@ Map of `esp32/buoy_combo/buoy_combo.ino` and `buoy_combo.h` for reading the sour
 | `buoy_combo.h` | `BuoyModem` class, network/NTRIP/health/telemetry, GNSS/INA init |
 | `secrets.h` | NTRIP caster, Hologram device key, `TELEMETRY_INTERVAL_MS` (from `.example`) |
 
-`BOTLETICS_SSL` must be **0** in the sketch (plain TCP NTRIP on port 2101).
+All TCP is plain `AT+CIP*` via `BuoyModem::tcp*Plain()` — the sketch never calls the library's SSL-gated paths, so the `BOTLETICS_SSL` default inside BotleticsSIM7000.h (=1, unconditionally redefined there) has no effect here.
 
 ---
 
 ## `setup()` sequence
 
 ```text
-Serial + BluetoothSerial begin
-SHUTDOWN_BTN interrupt
+BLE NUS init (advertising as RTK-Buoy-XXXX)
+STATUS_LED + SHUTDOWN_BTN interrupt
 initializeIna228()
 initializeGnssUart()     → UART2 ZED, RTCM3 on UART1
 modem RST high, powerOn(PWRKEY), delay 5s
-modemLinkBegin()             → UART1 @ 9600 then 115200
+modemLinkBegin()             → probe 115200, fall back 9600 → relock 115200
 modem.configureNetwork()     → boot path: CFUN=1 first, (boot) band log
 ```
 
@@ -38,9 +38,9 @@ On modem failure, sketch blocks in `while(1)`.
 |-------|------|------|
 | 1 | USB Serial → `modemSS` | Manual AT passthrough (returns early) |
 | 2 | `networkStatusCheck()` | Poll `CGREG` / `CSQ`; registration lost handling |
-| 3 | `enableGprs()` | PDP + CIP when registered |
-| 4 | `beginNTRIPClient()` | If GPRS up and NTRIP down (30 s retry) |
-| 5 | `handleNTRIPData()` | Read caster TCP → write RTCM to `gpsSerial` |
+| 3 | `setupGprs()` | Enable packet data when registered (proceeds on CSQ=99; only CSQ=0 gates) |
+| 4 | `beginNTRIPClient()` | If GPRS up and NTRIP down (30 s retry); detects chunked vs raw body |
+| 5 | `handleNTRIPData()` | Read caster TCP (chunked NTRIP/2.0 or raw ICY) → write RTCM to `gpsSerial` |
 | 6 | `monitorConnectionHealth()` | Stale path, CGREG, NTRIP streak, escalated recover |
 | 7 | `postTelemetry()` | Hologram JSON on interval |
 | 8 | Every 5 s | `printPowerStatus()`, `[GPS] fix/rtk/sats` |
@@ -58,8 +58,9 @@ On modem failure, sketch blocks in `while(1)`.
 | `configureNetwork(afterRecover)` | Hologram APN, LTE CAT-M bands; boot vs recover paths |
 | `configureLteCatM(afterRecover)` | `CBANDCFG`, `CFUN=0` only when `afterRecover==true` |
 | `ensurePdpActive()` / `bringUpCipStack()` | PDP context and `AT+CIP*` stack |
-| `tcpConnectPlain()` / `tcpSendPlain()` | Plain TCP for NTRIP (not SSL) |
-| `sendHologramCloudMessage()` | Hologram Cloud Socket framing |
+| `tcpConnectPlain()` / `tcpSendPlain()` | Plain TCP for NTRIP/Hologram (multiplexed links 0/1) |
+| `sendHologramCloudMessage()` | Hologram Cloud Socket framing on link 1 — NTRIP stays open |
+| `buildGGA(label)` | GGA sentence from one cached PVT poll; sent on connect + every 10 s |
 | `printDiagnostics()` | CPIN, CFUN, CGREG, CSQ, CNACT snapshot |
 
 ### Connection lifecycle
@@ -67,7 +68,7 @@ On modem failure, sketch blocks in `while(1)`.
 | Function | Purpose |
 |----------|---------|
 | `networkStatusCheck()` | Registration state; triggers invalidate on confirmed loss |
-| `enableGprs()` | Enable packet data when `CGREG` 1 or 5 |
+| `setupGprs()` | Enable packet data when `CGREG` 1 or 5 |
 | `invalidateDataPath()` | Drop NTRIP + GPRS flags — `[DATA] invalidate` |
 | `refreshGprs()` | Soft PDP/CIP refresh — `[GPRS] refresh` |
 | `modemRecoverEscalated()` | RST then PWRKEY on repeated triggers |
@@ -77,10 +78,10 @@ On modem failure, sketch blocks in `while(1)`.
 
 | Function | Purpose |
 |----------|---------|
-| `beginNTRIPClient()` | HTTP/NTRIP handshake to caster; sets `ntripConnected` |
-| `handleNTRIPData()` | Pump RTCM; updates `lastReceivedRtcmMs`, `noteCellularActivity()` |
+| `beginNTRIPClient()` | HTTP/NTRIP handshake; picks chunked (NTRIP/2.0) vs raw body from headers |
+| `handleNTRIPData()` | Pump RTCM either framing; updates `lastReceivedRtcmMs`, `noteCellularActivity()` |
 | `initializeGnssUart()` | Baud scan, `setPortInput(RTCM3)`, UBX out |
-| `postTelemetry()` | Build JSON, close NTRIP, Hologram send, queue NTRIP retry |
+| `postTelemetry()` | Build JSON, Hologram send on link 1 (CIPMUX=1 — NTRIP stays up) |
 
 ### Sensors / UI
 
@@ -103,7 +104,7 @@ On modem failure, sketch blocks in `while(1)`.
 | `gpsUARTOnline` | ZED UART2 working |
 | `lastReceivedRtcmMs` | Last RTCM byte time (health grace) |
 | `consecutiveNtripFailures` | Count toward escalated recover |
-| `s_modemRecoverNextPowerCycle` | Next escalated call uses PWRKEY |
+| `ntripChunkedStream` | Body framing from caster headers: true = NTRIP/2.0 chunked, false = raw ICY |
 
 ---
 

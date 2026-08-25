@@ -229,12 +229,17 @@ Flash the buoy and watch serial (115200 baud):
 [NET] connected
 [GPRS] enabled
 [NTRIP] connected
-[GPS] fix=3 rtk=FIXED sats=...
+[NTRIP] chunked stream (NTRIP/2.0)
+GPS 32.8651234 -117.2573012
+alt=12.4m
+RTK=FIXED
+horizAcc=0.021m
+sats=20
 [TELEM] Hologram cloud...
 [TELEM] Hologram OK
 ```
 
-Allow 1–3 minutes for first LTE registration outdoors or near a window. Brief NTRIP reconnect after each telemetry send is normal.
+Allow 1–3 minutes for first LTE registration outdoors or near a window. Classic NTRIP/1.0 casters print `[NTRIP] raw RTCM stream` instead of the chunked line — both are healthy.
 
 ## Telemetry pipeline details
 
@@ -285,7 +290,7 @@ The buoy sends `{"k":"<deviceKey>","d":"<jsonTelemetry>"}\n\n` over a plain TCP 
 
 Each `loop()` iteration:
 
-1. Network registration and GPRS (`networkStatusCheck`, `enableGprs`)
+1. Network registration and GPRS (`networkStatusCheck`, `setupGprs`)
 2. NTRIP connect/retry and RTCM relay (`beginNTRIPClient`, `handleNTRIPData`)
 3. Connection health monitoring (`monitorConnectionHealth`)
    - CGREG checked every 30 s — transient drops ignored while RTCM flows (2 min grace)
@@ -296,7 +301,7 @@ Each `loop()` iteration:
 4. Telemetry on interval (`postTelemetry`, default 60 s):
    - Polls ZED-F9P PVT, INA228 power, modem RSSI
    - Sends Hologram Cloud Socket message
-   - NTRIP socket closed briefly during POST to avoid AT conflicts
+   - Hologram uses multiplexed link 1 (`CIPMUX=1`) — the NTRIP socket on link 0 stays open
 5. Power + GPS status print every 5 s
 6. Graceful shutdown on GPIO 0 button
 
@@ -307,9 +312,9 @@ Each `loop()` iteration:
 | `[MODEM]` / `[DIAG]` | LTE config; `(boot)` / `(recover)`; hard recover / power cycle |
 | `[NET]` | CSQ, CGREG; `connected`, `registration lost` |
 | `[GPRS]` | Packet data; `refresh` (not full power cycle) |
-| `[NTRIP]` | Caster connect / fail; `fail streak` |
+| `[NTRIP]` | Caster connect / fail; chunked vs raw stream mode; `fail streak` |
 | `[RTCM]` | Throughput to GPS |
-| `[GPS]` | fix type, RTK state, satellites |
+| `GPS` | Position/RTK broadcast (BLE + serial): lat/lon, alt, RTK, hAcc, sats |
 | `[PWR]` | INA228 readings or bench note |
 | `[TELEM]` | Hologram upload result |
 | `[HEALTH]` | Connection health checks |
@@ -386,8 +391,8 @@ The ZED-F9P reports carrier solution in telemetry (`rtk`: `none`, `float`, `FIXE
 
 | Symptom | Fix |
 |---------|-----|
-| `[NET] CSQ=99 CGREG=0` | Wait 1–3 min; outdoors; check SIM on Hologram. `CSQ=99` can occur while `CGREG=5` still works |
-| `[NET] CSQ=0 CGREG=0` for minutes | Auto RST at **5 min**, then PWRKEY power cycle on next trigger |
+| `[NET] CSQ=99 CGREG=0` | Wait 1–3 min; outdoors; check SIM on Hologram. `CSQ=99` can occur while `CGREG=5` still works — firmware proceeds with GPRS when registered; only `CSQ=0` gates |
+| `[NET] CSQ=0 CGREG=0` for minutes | Auto **power cycle** at **5 min** (15 min cooldown), RST hard-recover fallback (**10 min** cooldown) |
 | `[NET] registration lost` | CGREG loss confirmed; waits to re-register |
 | `[MODEM] hard recover` / `[MODEM] power cycle` | Escalated recovery — see failure-paths doc |
 | `[MODEM] * skipped (cooldown)` | Wait 10 min (RST) or 15 min (power cycle) |
@@ -403,7 +408,7 @@ The ZED-F9P reports carrier solution in telemetry (`rtk`: `none`, `float`, `FIXE
 | TCP connect failed | Check `casterHost`, port **2101**, credentials in `secrets.h` |
 | HTTP error from caster | Wrong mountpoint or user/password |
 | No RTCM / no RTK | Confirm `[NTRIP] connected` and `[RTCM]` activity; clear sky view |
-| Drops after telemetry | Expected brief reconnect |
+| Drops after telemetry | Not expected anymore (Hologram uses link 1, NTRIP stays open on link 0) — investigate `[HOLO]`/`[TELEM]` logs if seen |
 
 ### GPS / RTK
 

@@ -2,9 +2,9 @@
 
 This document records **everything the RTK wave buoy project tried** with [Point One Navigation Polaris](https://pointonenav.com/) (network RTK / VRS over NTRIP), what worked, what failed, and **where to pick up** if you integrate Polaris on the LTE buoy again.
 
-**Production firmware today:** `esp32/buoy_combo/` uses a **plain NTRIP 1.x-style client** (`HTTP/1.0`, no GGA, raw RTCM after the HTTP header). The repo template `secrets.h.example` points at a **local/UCSD caster** (`BASE_CCS`), not Polaris.
+**Production firmware today:** `esp32/buoy_combo/` speaks **NTRIP 2.0** (HTTP/1.1 + `Ntrip-Version: Ntrip/2.0`, chunked decoder) with **GGA refresh every 10 s**, and auto-detects **raw-RTCM streams** from NTRIP/1.0 "ICY" casters via the `Transfer-Encoding` header. The repo template `secrets.h.example` points at a **local/UCSD caster** (`BASE_CCS`); Polaris credentials go in `secrets.h` (template: `secrets.polaris.h.example`).
 
-**Polaris on LTE was proven in the field** (logs show `rtk=FIXED` over Hologram) but the full Polaris stack lived in **uncommitted / reverted** work (`ntrip_profile.h`, May 2026). Only **modem battery-like recovery** from that period was kept in `buoy_combo.h`.
+**History:** the May 2026 Polaris-on-LTE port lived in an uncommitted `ntrip_profile.h`. Its protocol layer is now **merged inline into `buoy_combo.ino`** (chunked stream buffer, `buildGGA`, dual-link CIPMUX telemetry), and the **battery-like modem recovery** from that period survives in `buoy_combo.h`.
 
 ---
 
@@ -64,14 +64,14 @@ Flash guide (WiFi sketch): `tutorials/ESP32_FIRMWARE_FLASH_POLARIS.md` on **`mai
 
 ## Protocol comparison: legacy WiFi vs production LTE vs Polaris-on-LTE (reverted)
 
-| Feature | `esp32_polaris_wifi.ino` | `buoy_combo` (shipped) | `ntrip_profile.h` (reverted) |
-|---------|--------------------------|-------------------------|------------------------------|
+| Feature | `esp32_polaris_wifi.ino` | `buoy_combo` (current) | `ntrip_profile.h` (reverted) |
+|---------|--------------------------|------------------------|------------------------------|
 | Transport | WiFi `WiFiClient` | SIM7000 `AT+CIP*` plain TCP | Same as shipped |
-| HTTP version | **1.1** + `Ntrip-Version: Ntrip/2.0` | **1.0** | **1.1** + Ntrip/2.0 |
-| RTCM body | **Chunked decoder** | Assumes bytes after header (works for ICY/simple casters) | Chunked decoder |
-| GGA to caster | Yes, ~10 s | **No** | Yes |
-| Hologram telemetry | No | Yes (~60 s) | Yes |
-| Modem recovery | N/A | RST → PWRKEY (docs); **code: PWRKEY first** + `esp_restart` on fail | Same + stability tweaks |
+| HTTP version | **1.1** + `Ntrip-Version: Ntrip/2.0` | **1.1** + Ntrip/2.0; raw fallback for ICY casters | **1.1** + Ntrip/2.0 |
+| RTCM body | **Chunked decoder** | **Chunked decoder**, or raw passthrough when headers say ICY/identity | Chunked decoder |
+| GGA to caster | Yes, ~10 s | **Yes, ~10 s** (`buildGGA`) | Yes |
+| Hologram telemetry | No | Yes (~60 s, link 1 — NTRIP stays open on link 0) | Yes |
+| Modem recovery | N/A | PWRKEY power cycle first, RST fallback (`configureNetwork(true)`) | Same + stability tweaks |
 
 ### HTTP request shape (Polaris)
 
@@ -143,6 +143,8 @@ Interpretation: LTE registered → Polaris handshake OK → RTCM flowing → int
 
 ## Reverted LTE work (`ntrip_profile.h`) — what to restore
 
+> **Status (Aug 2026):** items 1–3 below are **merged inline into `buoy_combo.ino`** — `beginNTRIPClient`/`handleNTRIPData` with chunked + raw modes, static-buffer HTTP request, GGA builder, chunked parser. Item 4 is partial: `bringUpCipStack()` skips re-bring-up when already up, and telemetry no longer tears down NTRIP; task-WDT and full `String` removal remain open.
+
 The following lived in **`esp32/buoy_combo/ntrip_profile.h`** (deleted on revert, **never on `Base+PowerLog` remote**). Rebuild from `esp32_polaris_wifi.ino` + `buoy_combo.h` hooks:
 
 1. **`beginNTRIPClient` / `handleNTRIPData` replacements**  
@@ -194,10 +196,10 @@ These are the main reasons “Polaris works on WiFi” but “LTE + Polaris + te
 
 | Issue | Detail |
 |-------|--------|
-| **Dual stack** | NTRIP uses legacy `AT+CIP*`; Hologram uses `CNACT` + Botletics HTTP. `CIPSHUT` during NTRIP retry can kill the PDP Hologram needs. |
-| **Telemetry vs NTRIP** | `postTelemetry()` may **close the NTRIP socket** before opening Hologram — fine for plain casters, painful for Polaris (re-handshake + GGA). |
-| **FIFO backlog** | Modem buffers RTCM if the main loop is slow (telemetry, drain, health checks). ZED may see **stale** corrections → `rtk=FIXED` drops while `[NTRIP] connected`. |
-| **No GGA in shipped build** | Production `beginNTRIPClient()` cannot satisfy VRS long-term. |
+| **Dual stack** | NTRIP uses legacy `AT+CIP*`; Hologram uses `CNACT` + Botletics HTTP. `CIPSHUT` during NTRIP retry can kill the PDP Hologram needs. Managed by `ensurePdpActive()` re-activation order. |
+| **Telemetry vs NTRIP** | ~~Resolved~~: `CIPMUX=1` runs Hologram on link 1 while NTRIP stays open on link 0 — telemetry no longer tears down corrections. |
+| **FIFO backlog** | Modem buffers RTCM if the main loop is slow (telemetry, drain, health checks). ZED may see **stale** corrections → `rtk=FIXED` drops while `[NTRIP] connected`. Block `tcpRead()` refills amortize the AT cost; watch `[RTCM] ... backlog=`. |
+| ~~No GGA in shipped build~~ | Resolved: `buildGGA()` sends on connect and every 10 s while connected. |
 
 **Future directions (pick one per milestone):**
 
@@ -247,7 +249,7 @@ These are the main reasons “Polaris works on WiFi” but “LTE + Polaris + te
 | `esp32/legacy/esp32_polaris_wifi.ino` | **Best Polaris protocol reference** (WiFi) |
 | `esp32/legacy/esp32_polaris.ino` | Older Polaris + BLE + NVS config |
 | `esp32/legacy/esp32_rtk_mae.ino` | MAE course WiFi RTK; chunked parser history |
-| `esp32/buoy_combo/buoy_combo.h` | Production LTE; plain NTRIP; modem recovery |
+| `esp32/buoy_combo/buoy_combo.h` | Production LTE; NTRIP 1.0/2.0 auto-detect; modem recovery |
 | `esp32/buoy_combo/secrets.h.example` | Default **non-Polaris** caster template |
 | `esp32/buoy_combo/secrets.polaris.h.example` | Polaris field template (credentials from Canvas) |
 | `documentation/ntrip-and-caster-setup.md` | Production NTRIP setup |
@@ -276,3 +278,4 @@ LTE Polaris integration was **session work (May 2026)** and is documented here; 
 ---
 
 *Last updated: May 2026 — reflects revert to `cb756f9` + retained battery-like modem recovery.*
+*Aug 2026: protocol section merged inline into `buoy_combo.ino`; escalation order corrected to PWRKEY-first in [failure-paths.md](failure-paths.md).*

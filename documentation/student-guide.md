@@ -91,7 +91,7 @@ The `buoy_combo` firmware is designed as a robust state machine to handle unstab
 1. **Network Registration:** Ensures the SIM is registered to the LTE tower (checks `CGREG` registration status).
 2. **GPRS Activation:** Establishes a packet data connection (PDP context) with the cellular network.
 3. **NTRIP Connection:** Opens a TCP socket to the RTK caster and streams RTCM correction data to the ZED-F9P GNSS receiver via a dedicated UART.
-4. **Telemetry Cycle:** Periodically (every $60$ s by default) closes the NTRIP socket briefly to send a JSON telemetry payload over the Hologram Cloud Socket, then reconnects.
+4. **Telemetry Cycle:** Every $60$ s by default, sends a JSON telemetry payload to the Hologram Cloud Socket over a second multiplexed TCP link (`CIPMUX=1`) while NTRIP corrections keep flowing on link 0.
 5. **Health Monitoring:** `networkStatusCheck()` and `monitorConnectionHealth()` poll registration and the data path:
 
 | Fault | Detection | Recovery |
@@ -104,10 +104,10 @@ The `buoy_combo` firmware is designed as a robust state machine to handle unstab
 
 **Escalated modem recovery** (`modemRecoverEscalated`) — used for both registration timeout and NTRIP failure streak:
 
-1. **First trigger** → RST pin reset + `configureNetwork(true)` — log: `[MODEM] hard recover` (**$10$ min** cooldown)
-2. **Next trigger** (if still stuck) → full PWRKEY power cycle + `modem.begin()` — log: `[MODEM] power cycle` (**$15$ min** cooldown)
+1. **First choice** → full PWRKEY power cycle + `modem.begin()` — log: `[MODEM] power cycle` (**$15$ min** cooldown)
+2. **Fallback** (power cycle cooling down or failed) → RST pin reset + `configureNetwork(true)` — log: `[MODEM] hard recover` (**$10$ min** cooldown)
 
-When `CGREG` returns to $1$ or $5$, escalation resets to RST-first. **Boot** (`setup()`) uses a separate safe path: radio on first, band config at `CFUN=1` — log `(boot)`. Recover uses optional `CFUN=0` band cycle — log `(recover)`.
+Both paths end in `configureNetwork(true)` and wait for CGREG → GPRS → NTRIP to return. **Boot** (`setup()`) uses a separate safe path: radio on first, band config at `CFUN=1` — log `(boot)`. Recover uses optional `CFUN=0` band cycle — log `(recover)`.
 
 Cooldowns prevent rapid modem cycling that could drain the battery. Full timers, serial tags, and a field log example: [`failure-paths.md`](failure-paths.md). Operator quick fixes: [root `README.md` — Troubleshooting](../README.md#troubleshooting).
 

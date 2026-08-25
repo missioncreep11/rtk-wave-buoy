@@ -16,12 +16,12 @@ How the buoy detects outages, tears down the cellular data path, and recovers th
 |------|----------------|----------|---------------|------------|
 | **GPRS refresh** | `CGREG` OK but no RTCM/telemetry for **5 min** | **2 min** | PDP + CIP only | `[GPRS] refresh: data path stale` |
 | **Data invalidate** | Confirmed `CGREG` loss or refresh | — | NTRIP + GPRS flag | `[DATA] invalidate: <reason>` |
-| **RST hard recover** | 1st escalated trigger | **10 min** | Modem RST + `configureNetwork(true)` | `[MODEM] hard recover: <reason>` |
-| **PWRKEY power cycle** | 2nd escalated trigger after RST | **15 min** | `AT+CPOWD` + PWRKEY + `modem.begin()` | `[MODEM] power cycle: <reason>` |
+| **RST hard recover** | Escalated trigger when power cycle is cooling down or failed | **10 min** | Modem RST + `configureNetwork(true)` | `[MODEM] hard recover: <reason>` |
+| **PWRKEY power cycle** | Escalated trigger (first choice) | **15 min** | `AT+CPOWD` + PWRKEY + `modem.begin()` | `[MODEM] power cycle: <reason>` |
 | **ESP32 boot / reset** | Power-on, reset, re-flash | — | Full `setup()` | `Powering on modem...` → `Setup complete` |
 | **Shutdown button** | GPIO 0 | — | `AT+CPOWD=1`, ESP light sleep | `=== SHUTDOWN REQUESTED ===` |
 
-**Escalation:** RST first → power cycle on the **next** trigger. Resets to RST-first when `CGREG` is **1** or **5** again.
+**Escalation:** power cycle is tried first on every trigger; RST is the fallback when the power-cycle cooldown blocks or the attempt fails. Both paths end in `configureNetwork(true)` and wait for CGREG → GPRS → NTRIP.
 
 ### Escalated recover triggers
 
@@ -38,13 +38,12 @@ How the buoy detects outages, tears down the cellular data path, and recovers th
 
 ```mermaid
 flowchart TD
-  T[Trigger: 5–10 min unregistered OR 10 NTRIP failures] --> F{nextIsPowerCycle?}
-  F -->|false| R[Level 1: RST hard recover]
-  F -->|true| P[Level 2: PWRKEY power cycle]
-  R --> Cfg[configureNetwork true]
-  P --> Cfg
+  T[Trigger: 5–10 min unregistered OR 10 NTRIP failures] --> C{power cycle off cooldown?}
+  C -->|yes| P[Level 1: PWRKEY power cycle]
+  C -->|no| R[Level 2 fallback: RST hard recover]
+  P --> Cfg[configureNetwork true]
+  R --> Cfg
   Cfg --> Wait[Wait CGREG → GPRS → NTRIP]
-  Reg[CGREG 1 or 5] --> Reset[Clear flag — RST first again]
 ```
 
 ---
@@ -70,6 +69,7 @@ Default band **12**; fallback **2,4,12,13** (`LTE_CATM_US_FALLBACK`). Verizon: `
 
 - Ignored **2 min** while RTCM/cellular activity active (`CELLULAR_LINK_ALIVE_MS`).
 - **2** bad polls without grace → `[DATA] invalidate`, `[NET] registration lost`.
+- `CSQ=99` ("not measurable") does **not** block GPRS anymore — only `CSQ=0` gates `setupGprs()`. Some carriers read 99 while registered with data flowing.
 
 ## GPRS refresh (zombie PDP)
 
@@ -98,10 +98,10 @@ Every `TELEMETRY_INTERVAL_MS` (default **60 s**): close NTRIP → Hologram send 
 [HEALTH] network lost
 [DATA] invalidate: CGREG health
 [GPS] fix=3 rtk=none
-[MODEM] hard recover: registration timeout
-[MODEM] LTE CAT-M, band 12 (recover)
-... still CGREG=0 ...
 [MODEM] power cycle: registration timeout
+[MODEM] LTE CAT-M, band 12 (recover)
+... still CGREG=0 (cooldown) ...
+[MODEM] hard recover: registration timeout
 ```
 
 RTK returns after: `CGREG` 1/5 → `[GPRS] enabled` → `[NTRIP] connected` → `[RTCM]` → `rtk=FIXED`.
