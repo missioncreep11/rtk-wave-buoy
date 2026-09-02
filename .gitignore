@@ -65,6 +65,12 @@ matlab/
 # Local SD card data
 ola_data/
 
+# Raw GNSS logs — kept local, never tracked
+*.ubx
+
+# Python bytecode
+__pycache__/
+
 # Claude settings
 **/.claude/
 
