@@ -1,4 +1,5 @@
-// menuMain.ino
+#include "OpenLog_Artemis.h"
+// menuMain.cpp
 //Display the options
 //If user doesn't respond within a few seconds, return to main loop
 void menuMain()

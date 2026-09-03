@@ -7,7 +7,6 @@
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <HardwareSerial.h>
 #include <Wire.h>
-#include <cstring>
 
 // BLE forward declarations (defined in buoy_combo.ino)
 void buoyPrint(const String& msg);
@@ -164,14 +163,9 @@ extern volatile bool shutdownRequested;
 extern bool ina228Online;
 
 // Function declarations
-void networkStatusCheck();
-void setupGprs();
 void initializeGnssUart();
 void initializeIna228();
 void printPowerStatus();
-void beginNTRIPClient();
-void handleNTRIPData();
-void monitorConnectionHealth();
 void noteCellularActivity();
 void invalidateDataPath(const __FlashStringHelper *reason);
 void refreshGprs(const __FlashStringHelper *reason);
@@ -182,6 +176,34 @@ void modemRecoverEscalated(const __FlashStringHelper *reason);
 void postTelemetry();
 void updateStatusLED();
 void shutdownISR();
+uint16_t ntripForwardRaw();
+long ntripForwardChunked();
+void ntripStreamReset();
+void ntripStreamSeed(const uint8_t *data, uint16_t len);
+uint16_t ntripStreamRefill();
+int ntripStreamReadByte(uint32_t timeoutMs);
+bool responseIsChunked(const char *headers, uint16_t len);
+void dropNtrip();
+void ntripAttemptFailed();
+bool modemRespondsAt(uint16_t timeoutMs);
+bool modemLinkBegin();
+void modemUartFlush();
+void modemPwrkeyPowerOff();
+void beginRecovery(const __FlashStringHelper *reason);
+bool cgregRegistered(uint8_t n);
+bool cellularLinkAlive();
+bool cgregLossConfirmed(uint8_t n);
+const __FlashStringHelper *netLabel(uint8_t n);
+void networkStatusCheck();
+void setupGprs();
+int waitForCgatt(const __FlashStringHelper *expected, bool logFailures);
+void beginNTRIPClient();
+void handleNTRIPData();
+void monitorConnectionHealth();
+void gracefulShutdown();
+void broadcastGPS();
+void buoyPrint(const String& msg);
+void buoyPrintln(const String& msg);
 
 extern const char hologramDeviceKey[];
 extern char imei[];

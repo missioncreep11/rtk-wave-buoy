@@ -1,4 +1,5 @@
-// storeData.ino
+#include "OpenLog_Artemis.h"
+// storeData.cpp
 #define packetLength 512 // SdFat writes data in blocks of 512 bytes
 
 void storeData(void)

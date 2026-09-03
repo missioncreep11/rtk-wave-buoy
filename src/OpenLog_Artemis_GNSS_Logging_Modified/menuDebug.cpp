@@ -1,4 +1,5 @@
-//menuDebug.ino
+#include "OpenLog_Artemis.h"
+// menuDebug.cpp
 void menuDebug(bool *printMajorDebugMessages, bool *printMinorDebugMessages)
 {
   while (1)

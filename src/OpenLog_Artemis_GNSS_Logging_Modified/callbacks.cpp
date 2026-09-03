@@ -1,4 +1,5 @@
-// callbacks.ino
+#include "OpenLog_Artemis.h"
+// callbacks.cpp
 void SerialPrintTimeString()
 {
   char timeString[40];

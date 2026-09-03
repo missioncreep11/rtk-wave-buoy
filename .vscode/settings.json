@@ -1,0 +1,9 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.files.exclude": {
+        "**/.vscode": true,
+        "**/.vs": true,
+        "**/.pio": true,
+        "**/.venv": true
+    }
+}

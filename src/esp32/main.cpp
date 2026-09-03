@@ -24,13 +24,7 @@ char bleRxBuf[256] = {0};
 volatile bool bleDataReady = false;
 
 #include "secrets.h"
-#include "buoy_combo.h"
-
-// ========================================================
-// Style: camelCase for functions and vars, m_camelCase for
-// members, ALL_CAPS for macros, PascalCase for classes,
-// 2 space indentation
-// ========================================================
+#include "esp32.h"
 
 // BLE output helpers — echo to Serial and BLE simultaneously
 void buoyPrint(const String& msg)
@@ -51,6 +45,7 @@ void buoyPrint(const String& msg)
 }
 void buoyPrintln(const String& msg)
 {
+  int i = 0;
   buoyPrint(msg + "\n");
 }
 

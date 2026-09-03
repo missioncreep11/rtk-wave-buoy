@@ -1,4 +1,5 @@
-// lowerPower.ino
+#include "OpenLog_Artemis.h"
+// lowerPower.cpp
 // Read the battery voltage
 // If it is low, increment lowBatteryReadings
 // If lowBatteryReadings exceeds lowBatteryReadingsLimit then powerDown

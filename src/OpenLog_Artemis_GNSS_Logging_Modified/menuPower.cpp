@@ -1,4 +1,5 @@
-//menuPower.ino
+#include "OpenLog_Artemis.h"
+// menuPower.cpp
 void menuPower()
 {
   while (1)

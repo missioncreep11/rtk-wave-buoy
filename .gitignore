@@ -59,6 +59,10 @@ local_portal/buoy.db
 local_portal/.venv/
 local_portal/__pycache__/
 
+# PlatformIO build artifacts
+build/
+.pio/
+
 # Jupyter notebooks (exclude personal notebooks, track student starter notebooks)
 *.ipynb
 !accelerometer/magcal_notebook.ipynb
@@ -75,4 +79,10 @@ ola_data/
 
 # macOS
 .DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
 

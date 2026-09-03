@@ -1,4 +1,5 @@
-// logging.ino
+#include "OpenLog_Artemis.h"
+// logging.cpp
 //Returns next available log file name
 //Checks the spots in EEPROM for the next available LOG# file name
 //Updates EEPROM and then appends to the new log file.

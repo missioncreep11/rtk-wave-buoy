@@ -107,24 +107,16 @@ struct struct_settings {
   int  serialTXBaudRate = 115200;
   struct_uBlox sensor_uBlox;
   struct_IMU sensor_IMU; // - Amara
-} settings;
+};
 
 //These are the devices on board OpenLog that may be on or offline.
 struct struct_online {
   bool microSD = false;
   bool dataLogging = false;
   bool imu = false;
-} online;
+};
 
 //These structs define supported sensors and if they are available and online(started).
 struct struct_QwiicSensors {
   bool uBlox;
-};
-
-struct_QwiicSensors qwiicAvailable = {
-  .uBlox = false,
-};
-
-struct_QwiicSensors qwiicOnline = {
-  .uBlox = false,
 };

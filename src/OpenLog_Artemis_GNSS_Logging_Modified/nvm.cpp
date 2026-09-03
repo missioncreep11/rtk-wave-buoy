@@ -1,4 +1,5 @@
-//nvm.ino
+#include "OpenLog_Artemis.h"
+// nvm.cpp
 void loadSettings()
 {
   //First load any settings from NVM

@@ -1,4 +1,5 @@
-// menuAttachedDevices.ino
+#include "OpenLog_Artemis.h"
+// menuAttachedDevices.cpp
 //Configure the attached GNSS module
 void menuConfigure_uBlox()
 {

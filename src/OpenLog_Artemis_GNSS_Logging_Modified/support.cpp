@@ -1,4 +1,5 @@
-// support.ino
+#include "OpenLog_Artemis.h"
+// support.cpp
 void printMajorDebug(String thingToPrint)
 {
   if(settings.printMajorDebugMessages == true)
@@ -408,7 +409,7 @@ typedef union
     float F;
 } ola_i32fl_t;
 
-static int olaftoa(float fValue, char *pcBuf, int iPrecision, int bufSize)
+int olaftoa(float fValue, char *pcBuf, int iPrecision, int bufSize)
 {
     ola_i32fl_t unFloatValue;
     int iExp2, iBufSize;

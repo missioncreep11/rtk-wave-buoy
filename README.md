@@ -127,7 +127,7 @@ On USB bench power, INA228 may not reflect pack voltage — serial shows a bench
 
 **Board:** SparkFun ESP32 Thing Plus (or compatible)
 
-**Libraries** (install from Arduino Library Manager):
+**Libraries** (installed automatically via `platformio.ini`):
 - BotleticsSIM7000
 - Adafruit INA228
 - SparkFun u-blox GNSS
@@ -135,11 +135,17 @@ On USB bench power, INA228 may not reflect pack voltage — serial shows a bench
 `BOTLETICS_SSL` is forced to `0` in the sketch so NTRIP uses plain TCP on port 2101.
 
 ```bash
-cp esp32/buoy_combo/secrets.h.example esp32/buoy_combo/secrets.h
+cp esp32/secrets.h.example esp32/secrets.h
 # edit secrets.h with your NTRIP caster credentials and Hologram device key
 ```
 
-Upload `esp32/buoy_combo/buoy_combo.ino` via Arduino IDE.
+Open this repo in VSCode with the PlatformIO extension installed, then:
+
+```bash
+pio run --target upload -e esp32
+```
+
+Or use the PlatformIO sidebar → Build / Upload buttons.
 
 **Configuration (`secrets.h`):**
 
@@ -154,14 +160,20 @@ Upload `esp32/buoy_combo/buoy_combo.ino` via Arduino IDE.
 
 **Board:** SparkFun RedBoard Artemis ATP (Apollo3 package **2.2.1**)
 
-**Additional board URL:**
-```
-https://raw.githubusercontent.com/sparkfun/Arduino_Apollo3/main/package_sparkfun_apollo3_index.json
+**Platform:** `apollo3blue` (auto-installed via `platformio.ini`)
+
+**Libraries** (installed automatically via `platformio.ini`): SparkFun u-blox GNSS, ICM-20948, SdFat
+
+```bash
+pio run --target upload -e openlog_artemis
 ```
 
-**Libraries:** SparkFun u-blox GNSS, ICM-20948, SdFat, MicroNMEA
+Or use the PlatformIO sidebar → Build / Upload buttons.
 
-Upload `OpenLog_Artemis_GNSS_Logging_Modified/` via Arduino IDE. On Apple Silicon Macs, use `upload_ola_firmware.py`.
+On Apple Silicon Macs, if the port isn't auto-detected, specify it:
+```bash
+pio run --target upload -e openlog_artemis -o upload_port=/dev/cu.usbserial-XXXX
+```
 
 **SD card:** Format FAT32. Reseat if mount errors appear.
 

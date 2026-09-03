@@ -1,4 +1,5 @@
-// menuIMU.ino
+#include "OpenLog_Artemis.h"
+// menuIMU.cpp
 // IMU configuration menu function
 void menuConfigure_IMU() {
   while (1) {

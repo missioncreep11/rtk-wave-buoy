@@ -1,4 +1,5 @@
-// Sensors.ino
+#include "OpenLog_Artemis.h"
+// Sensors.cpp
 //Init / begin comm with all enabled sensors
 bool beginSensors()
 {

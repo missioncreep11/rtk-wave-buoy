@@ -1,212 +1,49 @@
-// OpenLog_Artemis_GNSS_Logging_ino
-/*
-  OpenLog Artemis GNSS Logging
-  By: Paul Clark (PaulZC)
-  Date: February 20th, 2024
-  Version: V3.2
+#include "OpenLog_Artemis.h"
+// OpenLog_Artemis_GNSS_Logging Modified
 
-  This firmware runs on the OpenLog Artemis and is dedicated to logging UBX and NMEA
-  messages from the u-blox series F9 and M10 GNSS receivers - using the Configuration Interface
-  via v3 of the SparkFun u-blox GNSS library.
-
-  This version uses v2.2.1 of the SparkFun Apollo3 (artemis) core.
-  
-  The Board should be set to SparkFun Apollo3 \ RedBoard Artemis ATP.
-
-  Messages are streamed directly to SD in UBX/NMEA format without being processed.
-  The SD log files can be analysed afterwards with (e.g.) u-center or RTKLIB.
-
-  You can disable SD card logging if you want to (menu 1 option 1).
-  By default, abbreviated UBX messages are displayed in the serial monitor with timestamps.
-  You can disable this with menu 1 option 2.
-  The message interval can be adjusted (menu 1 option 4 | 5).
-  The logging duration and sleep duration can be adjusted (menu 1 option 6 & 7).
-  If you want the logger to log continuously, set the sleep duration to zero.
-  If you want the logger to open a new log file after sleeping, use menu 1 option 8.
-
-  You can configure the GNSS module and which messages it produces using menu 2.
-  You can disable GNSS logging using option 1.
-  There are two ways to power down the GNSS module while the OLA is asleep:
-  a power management task, or switch off the Qwiic power.
-  Option 2 enables / disables the power management task. The task duration is set
-  to one second less than the sleep duration so the module will be ready when the OLA wakes up.
-  Individual messages can be enabled / disabled.
-  Leave the UBX-NAV-PVT message enabled if you want the OLA to set its RTC from GNSS.
-  You can selectively enable/disable GPS, Galileo, BeiDou, GLONASS and QZSS.
-  For fast log rates, you may need to disable all constellations except GPS - but this is
-  module-dependent.
-
-  If the OLA RTC has been synchronised to GNSS (UTC) time, the SD files will have correct
-  created and modified time stamps.
-
-  Diagnostic messages are split into major and minor. You can enable either or both
-  via menu d.
-
-  During logging, you can instruct the OLA to close the current log file
-  and open a new log file using option f.
-
-  Only the I2C port settings are stored in the GNSS' battery-backed memory.
-  All other settings are set in RAM only. So removing the power will restore
-  the majority of the module's settings.
-  If you need to completely reset the GNSS module, use option g followed by y.
-
-  Option r will reset all of the OLA settings. Afterwards, it can take the code a long
-  time to open the next available log file as it needs to check all existing files first.
-
-  The settings are stored in a file called OLA_GNSS_settings.cfg.
-  (The settings for the regular OpenLog_Artemis are stored separately in OLA_settings.cfg)
-
-  Only UBX/NMEA data is logged to SD. ACKs and NACKs are automatically stripped out.
-
-  New in v3:
-  
-  The GNSS UBX and/or NMEA data can also be streamed to the TX pin.
-  Open the logging menu and see options 11-13 for more details. 
-  
-  Based extensively on:
-  OpenLog Artemis
-  By: Nathan Seidle
-  SparkFun Electronics
-  Date: November 26th, 2019
-  Feel like supporting our work? Buy a board from SparkFun!
-  https://www.sparkfun.com/products/16832
-
-  Version history: please see CHANGELOG.md for details
-
-*/
-
-const int FIRMWARE_VERSION_MAJOR = 3;
-const int FIRMWARE_VERSION_MINOR = 2;
-
-//Define the OLA board identifier:
-//  This is an int which is unique to this variant of the OLA and which allows us
-//  to make sure that the settings in EEPROM are correct for this version of the OLA
-//  (sizeOfSettings is not necessarily unique and we want to avoid problems when swapping from one variant to another)
-//  It is the sum of:
-//    the variant * 0x100 (OLA = 1; GNSS_LOGGER = 2; GEOPHONE_LOGGER = 3)
-//    the major firmware version * 0x10
-//    the minor firmware version
-#define OLA_IDENTIFIER 0x232 // This will appear as 562 (decimal) in OLA_GNSS_settings.cfg
-
-#include "settings.h"
-#include "ICM_20948.h" // ICM-20948 library - Amara
-ICM_20948_SPI myICM; // ICM-20948 object declaration - Amara
-//Define the pin functions
-//Depends on hardware version. This can be found as a marking on the PCB.
-//x04 was the SparkX 'black' version.
-//v10 was the first red version.
-#define HARDWARE_VERSION_MAJOR 1
-#define HARDWARE_VERSION_MINOR 0
-
-#if(HARDWARE_VERSION_MAJOR == 0 && HARDWARE_VERSION_MINOR == 4)
-const byte PIN_MICROSD_CHIP_SELECT = 10;
-const byte PIN_IMU_POWER = 22;
-#elif(HARDWARE_VERSION_MAJOR == 1 && HARDWARE_VERSION_MINOR == 0)
-const byte PIN_MICROSD_CHIP_SELECT = 23;
-const byte PIN_IMU_POWER = 27;
-const byte PIN_PWR_LED = 29;
-const byte PIN_VREG_ENABLE = 25;
-const byte PIN_VIN_MONITOR = 34; // VIN/3 (1M/2M - will require a correction factor)
-#endif
-
-const byte PIN_POWER_LOSS = 3;
-const int8_t PIN_LOGIC_DEBUG = -1;
-const byte PIN_MICROSD_POWER = 15;
-const byte PIN_QWIIC_POWER = 18;
-const byte PIN_STAT_LED = 19;
-const byte PIN_IMU_INT = 37;
-const byte PIN_IMU_CHIP_SELECT = 44;
-const byte PIN_STOP_LOGGING = 32;
-const byte PIN_QWIIC_SCL = 8;
-const byte PIN_QWIIC_SDA = 9;
-const byte PIN_SPI_SCK = 5;
-const byte PIN_SPI_CIPO = 6;
-const byte PIN_SPI_COPI = 7;
-const byte BREAKOUT_PIN_32 = 32;
-const byte BREAKOUT_PIN_TX = 12;
-const byte BREAKOUT_PIN_RX = 13;
-const byte BREAKOUT_PIN_11 = 11;
-
-enum returnStatus {
-  STATUS_GETBYTE_TIMEOUT = 255,
-  STATUS_GETNUMBER_TIMEOUT = -123455555,
-  STATUS_PRESSED_X,
-};
-
-//Setup Qwiic Port
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-#include <Wire.h>
-TwoWire qwiic(PIN_QWIIC_SDA,PIN_QWIIC_SCL); //Will use pads 8/9
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-//EEPROM for storing settings
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-#include <EEPROM.h>
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-//microSD Interface
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-#include <SPI.h>
-
-#include <SdFat.h> //SdFat v2.2.0 by Bill Greiman: http://librarymanager/All#SdFat_exFAT
-
-#define SD_FAT_TYPE 3 // SD_FAT_TYPE = 0 for SdFat/File, 1 for FAT16/FAT32, 2 for exFAT, 3 for FAT16/FAT32 and exFAT.
-#define SD_CONFIG SdSpiConfig(PIN_MICROSD_CHIP_SELECT, SHARED_SPI, SD_SCK_MHZ(24)) // 24MHz
+// Global variable definitions
+TwoWire qwiic(PIN_QWIIC_SDA, PIN_QWIIC_SCL);
+ICM_20948_SPI myICM;
+SFE_UBLOX_GNSS gpsSensor_ublox;
+Apollo3RTC myRTC;
 
 #if SD_FAT_TYPE == 1
 SdFat32 sd;
-File32 gnssDataFile; //File that all incoming GNSS data is written to
+File32 gnssDataFile;
 #elif SD_FAT_TYPE == 2
 SdExFat sd;
-ExFile gnssDataFile; //File that all incoming GNSS data is written to
+ExFile gnssDataFile;
 #elif SD_FAT_TYPE == 3
 SdFs sd;
-FsFile gnssDataFile; //File that all incoming GNSS data is written to
-FsFile imuDataFile;  //File that all incoming IMU CSV data is written to
-#else // SD_FAT_TYPE == 0
+FsFile gnssDataFile;
+FsFile imuDataFile;
+#else
 SdFat sd;
-File gnssDataFile; //File that all incoming GNSS data is written to
-File imuDataFile;  //File that all incoming IMU CSV data is written to
-#endif  // SD_FAT_TYPE
+File gnssDataFile;
+File imuDataFile;
+#endif
 
-char gnssDataFileName[30] = ""; //We keep a record of this file name so that we can re-open it upon wakeup from sleep
-char imuDataFileName[30] = "";  //Global IMU file name to survive sleep/wake cycles
-const int sdPowerDownDelay = 100; //Delay for this many ms before turning off the SD card power
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+char gnssDataFileName[30] = "";
+char imuDataFileName[30] = "";
+const int sdPowerDownDelay = 100;
 
-//Add RTC interface for Artemis
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-#include "RTC.h" //Include RTC library included with the Aruino_Apollo3 core
-Apollo3RTC myRTC; //Create instance of RTC class
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+struct_settings settings;
+struct_online online;
+struct_QwiicSensors qwiicAvailable = { .uBlox = false };
+struct_QwiicSensors qwiicOnline = { .uBlox = false };
 
-#define MAX_PAYLOAD_SIZE 384 // Override MAX_PAYLOAD_SIZE for getModuleInfo which can return up to 348 bytes
-#define FILE_BUFFER_SIZE 32768
-
-#include "SparkFun_u-blox_GNSS_v3.h" //Click here to get the library: http://librarymanager/All#SparkFun_u-blox_GNSS_v3
-SFE_UBLOX_GNSS gpsSensor_ublox;
-
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-//Global variables
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-uint64_t measurementStartTime; //Used to calc the elapsed time
-unsigned long lastReadTime = 0; //Used to delay between u-blox reads
-unsigned long lastDataLogSyncTime = 0; //Used to sync SD every second
-const byte menuTimeout = 15; //Menus will exit/timeout after this number of seconds
-bool rtcHasBeenSyncd = false; //Flag to indicate if the RTC been sync'd to GNSS
-bool rtcNeedsSync = true; //Flag to indicate if the RTC needs to be sync'd (after sleep)
-bool gnssSettingsChanged = false; //Flag to indicate if the gnss settings have been changed
-volatile static bool stopLoggingSeen = false; //Flag to indicate if we should stop logging
-int lowBatteryReadings = 0; // Count how many times the battery voltage has read low
-const int lowBatteryReadingsLimit = 1000; // Don't declare the battery voltage low until we have had this many consecutive low readings (to reject sampling noise)
-bool ignorePowerLossInterrupt = true; // Ignore the power loss interrupt - when attaching the interrupt
-unsigned long lastIMUReadTime = 0; // - Amara
-//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-//unsigned long startTime = 0;
-
-#define DUMP(varname) {Serial.printf("%s: %d\r\n", #varname, varname);}
+uint64_t measurementStartTime = 0;
+unsigned long lastReadTime = 0;
+unsigned long lastDataLogSyncTime = 0;
+const byte menuTimeout = 15;
+bool rtcHasBeenSyncd = false;
+bool rtcNeedsSync = true;
+bool gnssSettingsChanged = false;
+volatile bool stopLoggingSeen = false;
+int lowBatteryReadings = 0;
+const int lowBatteryReadingsLimit = 1000;
+bool ignorePowerLossInterrupt = true;
+unsigned long lastIMUReadTime = 0;
 
 void setup() {
   //If 3.3V rail drops below 3V, system will power down and maintain RTC

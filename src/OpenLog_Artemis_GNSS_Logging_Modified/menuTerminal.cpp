@@ -1,4 +1,5 @@
-// menuTerminal.ino
+#include "OpenLog_Artemis.h"
+// menuTerminal.cpp
 void menuLogRate(bool *prevTerminalOutput)
 {
   bool requestRestart = false;
