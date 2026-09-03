@@ -80,7 +80,7 @@ struct struct_settings {
   int sizeOfSettings = 0; //sizeOfSettings **must** be the first entry and must be int
   int olaIdentifier = OLA_IDENTIFIER; // olaIdentifier **must** be the second entry
   int nextDataLogNumber = 1;
-  uint64_t usBetweenReadings = 1000000ULL; //1000,000us = 1000ms = 1 readings per second.
+  uint64_t usBetweenReadings = 250000ULL;  //1,000,000us = 1000ms = 1 readings per second.
   uint64_t usLoggingDuration = 10000000ULL; //10,000,000us = 10s logging duration
   uint64_t usSleepDuration = 0ULL; //0us = do not sleep (continuous logging)
   bool openNewLogFile = true;
